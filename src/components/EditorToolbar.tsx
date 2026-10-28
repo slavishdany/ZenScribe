@@ -3,7 +3,8 @@ import { Editor } from '@tiptap/react';
 import {
   Bold, Italic, Heading1, Heading2, Heading3,
   Quote, List, ListOrdered, Undo, Redo,
-  Sparkles, Sun, Moon, Type, Maximize2
+  Sparkles, Sun, Moon, Type, Maximize2,
+  BookOpen, Compass
 } from 'lucide-react';
 import { EditorFont, EditorWidth } from '../types';
 
@@ -17,6 +18,8 @@ interface EditorToolbarProps {
   onWidthChange: (width: EditorWidth) => void;
   onThemeToggle: () => void;
   onOpenAIPanel: () => void;
+  onToggleChapters?: () => void;
+  onOpenWorldbuilding?: () => void;
 }
 
 export const EditorToolbar: React.FC<EditorToolbarProps> = ({
@@ -29,6 +32,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   onWidthChange,
   onThemeToggle,
   onOpenAIPanel,
+  onToggleChapters,
+  onOpenWorldbuilding,
 }) => {
   if (!editor) return null;
 
@@ -38,7 +43,31 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     }`}>
       {/* Brand & Strumenti Formattazione */}
       <div className="flex items-center space-x-1 sm:space-x-2">
-        <span className="font-serif font-bold text-sm tracking-tight mr-2 text-stone-800 dark:text-stone-200 select-none">
+        {onToggleChapters && (
+          <button
+            onClick={onToggleChapters}
+            className="p-1.5 rounded hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-700 dark:text-stone-300 flex items-center space-x-1 text-xs font-medium"
+            title="Sfoglia Capitoli (SQLite)"
+          >
+            <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span className="hidden md:inline">Capitoli</span>
+          </button>
+        )}
+
+        {onOpenWorldbuilding && (
+          <button
+            onClick={onOpenWorldbuilding}
+            className="p-1.5 rounded hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-700 dark:text-stone-300 flex items-center space-x-1 text-xs font-medium"
+            title="Bibbia del Romanzo: Personaggi e Luoghi (SQLite)"
+          >
+            <Compass className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden md:inline">Personaggi</span>
+          </button>
+        )}
+
+        <div className="h-4 w-px bg-stone-300 dark:bg-stone-700 mx-1"></div>
+
+        <span className="font-serif font-bold text-sm tracking-tight mr-1 text-stone-800 dark:text-stone-200 select-none">
           ZenScribe
         </span>
 

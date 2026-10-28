@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Sparkles, Cpu, Check, Copy, ArrowRight, Loader2, X, RefreshCw } from 'lucide-react';
 import { correctSpellingLocal, rephraseTextLocal } from '../services/localAi';
 import { continueWritingCreative, expandConceptCreative } from '../services/geminiAi';
+import { ottieniContestoNarrativo } from '../services/db';
 import { ServerStatusInfo } from '../types';
 
 interface AIPanelProps {
@@ -57,16 +58,18 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 
     try {
       let output = '';
+      const context = await ottieniContestoNarrativo();
+
       if (actionType === 'spellcheck') {
         if (!serverStatus.isReady) {
           throw new Error("Il server locale Llamafile non è attivo sulla porta 8080. Verifica che 'llamafile-server.exe' sia in resources/.");
         }
-        output = await correctSpellingLocal(inputText);
+        output = await correctSpellingLocal(inputText, context);
       } else if (actionType === 'rephrase') {
         if (!serverStatus.isReady) {
           throw new Error("Il server locale Llamafile non è attivo sulla porta 8080.");
         }
-        output = await rephraseTextLocal(inputText);
+        output = await rephraseTextLocal(inputText, context);
       } else if (actionType === 'continue') {
         if (!geminiApiKey) {
           throw new Error("Chiave API di Gemini non configurata. Inseriscila nelle impostazioni.");

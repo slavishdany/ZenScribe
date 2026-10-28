@@ -33,10 +33,12 @@ dist/
 # Log
 *.log
 
-# Modelli AI locali (troppo grandi per GitHub, limite 100 MB per file)
+# Modelli AI locali e binari runner (troppo grandi per GitHub, limite 100 MB per file)
 *.llamafile
 *.llamafile.exe
 *.gguf
+resources/*.exe
+src-tauri/resources/*.exe
 
 # Impostazioni locali di Claude Code
 .claude/settings.local.json

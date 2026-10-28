@@ -211,13 +211,28 @@ fn get_candidate_resource_dirs<R: Runtime>(app_handle: &AppHandle<R>) -> Vec<Pat
         }
     }
 
+    // 5. Cartella Download dell'utente (comoda per rilevare modelli appena scaricati)
+    #[cfg(target_os = "windows")]
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        let downloads = PathBuf::from(userprofile).join("Downloads");
+        if downloads.exists() {
+            dirs.push(downloads);
+        }
+    }
+
     dirs
 }
 
 fn format_model_display_name(filename: &str) -> String {
     let lower = filename.to_lowercase();
-    if lower.contains("modello-italiano") {
+    if lower.contains("meta-llama-3.1-8b") {
+        "Meta Llama 3.1 8B Instruct".to_string()
+    } else if lower.contains("modello-italiano") {
         "Modello Italiano (Llama 3.2 3B)".to_string()
+    } else if lower.contains("llama-3.2-3b") {
+        "Llama 3.2 3B Instruct".to_string()
+    } else if lower.contains("llama-3.2-1b") {
+        "Llama 3.2 1B Instruct".to_string()
     } else if lower.contains("qwen3.5-0.8b") || (lower.contains("qwen") && lower.contains("0.8b")) {
         "Qwen 3.5 0.8B (Ultra Veloce)".to_string()
     } else if lower.contains("qwen-2.5-1.5b") || (lower.contains("qwen") && lower.contains("1.5b")) {
@@ -226,13 +241,41 @@ fn format_model_display_name(filename: &str) -> String {
         filename
             .replace(".llamafile.exe", "")
             .replace(".llamafile", "")
+            .replace(".gguf", "")
             .replace(".exe", "")
             .replace("_", " ")
             .replace("-", " ")
     }
 }
 
-/// Restituisce la lista di tutti i modelli Llamafile eseguibili presenti in `resources/`
+/// Individua l'eseguibile runner Llamafile (server)
+fn resolve_server_binary<R: Runtime>(app_handle: &AppHandle<R>) -> Option<PathBuf> {
+    let search_dirs = get_candidate_resource_dirs(app_handle);
+    let candidate_names = [
+        "llamafile-server.exe",
+        "llamafile-server-x86_64-pc-windows-msvc.exe",
+        "llamafile.exe",
+        "llamafile-server",
+        "llamafile",
+    ];
+
+    for dir in &search_dirs {
+        for name in &candidate_names {
+            let p = dir.join(name);
+            if p.exists() {
+                if let Ok(meta) = std::fs::metadata(&p) {
+                    if meta.len() > 1024 * 1024 { // Almeno 1MB (non file vuoto)
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Restituisce la lista di tutti i modelli AI disponibili (esclude i binari runner del server)
 fn scan_available_models<R: Runtime>(app_handle: &AppHandle<R>, active_name: Option<&str>) -> Vec<LocalModelInfo> {
     let search_dirs = get_candidate_resource_dirs(app_handle);
     let mut models = Vec::new();
@@ -245,44 +288,36 @@ fn scan_available_models<R: Runtime>(app_handle: &AppHandle<R>, active_name: Opt
 
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
-                let mut path = entry.path();
+                let path = entry.path();
                 if path.is_file() {
                     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                     let lower = file_name.to_lowercase();
 
-                    // Su Windows auto-rinomina .llamafile in .llamafile.exe se mancante
-                    #[cfg(target_os = "windows")]
-                    if lower.ends_with(".llamafile") && !lower.ends_with(".exe") {
-                        let new_path = path.with_extension("llamafile.exe");
-                        if !new_path.exists() {
-                            if let Ok(_) = std::fs::rename(&path, &new_path) {
-                                println!("[ZenScribe] Ridenominato in: {}", new_path.display());
-                                path = new_path;
-                            }
-                        }
+                    // Ignora gli eseguibili del runner del server
+                    if lower.starts_with("llamafile-server") || lower == "llamafile.exe" || lower == "llamafile" {
+                        continue;
                     }
 
-                    let final_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-                    let final_lower = final_name.to_lowercase();
+                    let is_model = lower.ends_with(".gguf")
+                        || lower.ends_with(".llamafile")
+                        || lower.ends_with(".llamafile.exe")
+                        || lower.contains("llama")
+                        || lower.contains("qwen")
+                        || lower.contains("modello")
+                        || lower.contains("mistral");
 
-                    let is_candidate = final_lower.ends_with(".llamafile.exe")
-                        || final_lower.contains("llamafile")
-                        || (final_lower.ends_with(".exe") && (final_lower.contains("qwen") || final_lower.contains("llama") || final_lower.contains("modello")));
-
-                    let is_placeholder = final_lower.contains("msvc");
-
-                    if is_candidate && !is_placeholder {
-                        if !seen_filenames.contains(&final_name) {
+                    if is_model {
+                        if !seen_filenames.contains(file_name) {
                             if let Ok(meta) = std::fs::metadata(&path) {
-                                if meta.len() > 1024 * 1024 { // Almeno 1MB
-                                    seen_filenames.insert(final_name.clone());
+                                if meta.len() > 50 * 1024 * 1024 { // Almeno 50MB per essere un modello AI reale
+                                    seen_filenames.insert(file_name.to_string());
                                     let is_active = match active_name {
-                                        Some(active) => active == final_name,
+                                        Some(active) => active == file_name,
                                         None => false,
                                     };
                                     models.push(LocalModelInfo {
-                                        display_name: format_model_display_name(&final_name),
-                                        filename: final_name,
+                                        display_name: format_model_display_name(file_name),
+                                        filename: file_name.to_string(),
                                         size_mb: (meta.len() as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0,
                                         is_active,
                                     });
@@ -295,10 +330,10 @@ fn scan_available_models<R: Runtime>(app_handle: &AppHandle<R>, active_name: Opt
         }
     }
 
-    // Ordina: prima quello con 'italiano', poi per dimensione o nome
+    // Ordina: prima quello con 'meta' o 'italiano', poi per dimensione o nome
     models.sort_by(|a, b| {
-        let a_it = a.filename.to_lowercase().contains("italiano");
-        let b_it = b.filename.to_lowercase().contains("italiano");
+        let a_it = a.filename.to_lowercase().contains("meta") || a.filename.to_lowercase().contains("italiano");
+        let b_it = b.filename.to_lowercase().contains("meta") || b.filename.to_lowercase().contains("italiano");
         if a_it && !b_it {
             std::cmp::Ordering::Less
         } else if !a_it && b_it {
@@ -311,18 +346,17 @@ fn scan_available_models<R: Runtime>(app_handle: &AppHandle<R>, active_name: Opt
     models
 }
 
-/// Individua il percorso del file corrispondente al nome richiesto (o sceglie il preferito)
-fn resolve_model_binary<R: Runtime>(app_handle: &AppHandle<R>, target_filename: Option<&str>) -> Option<(PathBuf, String)> {
+/// Individua il percorso assoluto del modello selezionato o del primo disponibile
+fn resolve_model_path<R: Runtime>(app_handle: &AppHandle<R>, target_filename: Option<&str>) -> Option<(PathBuf, String)> {
     let search_dirs = get_candidate_resource_dirs(app_handle);
 
-    // 1. Se è stato richiesto un file specifico
+    // 1. Se richiesto un nome specifico
     if let Some(target) = target_filename {
         for dir in &search_dirs {
             let p = dir.join(target);
             if p.exists() {
                 return Some((p, target.to_string()));
             }
-            // Prova con estensione .exe se omessa
             let p_exe = dir.join(format!("{}.exe", target));
             if p_exe.exists() {
                 return Some((p_exe, format!("{}.exe", target)));
@@ -330,7 +364,7 @@ fn resolve_model_binary<R: Runtime>(app_handle: &AppHandle<R>, target_filename: 
         }
     }
 
-    // 2. Fallback: primo modello disponibile dalla scansione
+    // 2. Fallback: primo modello disponibile rilevato
     let available = scan_available_models(app_handle, None);
     if let Some(first) = available.first() {
         for dir in &search_dirs {
@@ -344,61 +378,34 @@ fn resolve_model_binary<R: Runtime>(app_handle: &AppHandle<R>, target_filename: 
     None
 }
 
-/// Rileva facoltativamente un modello GGUF esterno se presente
-fn find_gguf_model<R: Runtime>(app_handle: &AppHandle<R>) -> Option<PathBuf> {
-    let search_dirs = get_candidate_resource_dirs(app_handle);
-
-    for dir in &search_dirs {
-        if !dir.exists() {
-            continue;
-        }
-
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext.to_string_lossy().to_lowercase() == "gguf" {
-                            if let Ok(meta) = entry.metadata() {
-                                if meta.len() > 1024 * 1024 {
-                                    println!("[ZenScribe] Trovato modello GGUF esterno: {}", path.display());
-                                    return Some(path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
 fn spawn_llamafile_server<R: Runtime>(
     app_handle: &AppHandle<R>,
     target_filename: Option<&str>,
 ) -> Result<(Child, String), String> {
-    let (server_path, chosen_name) = resolve_model_binary(app_handle, target_filename).ok_or_else(|| {
-        "Nessun eseguibile Llamafile valido (> 1 MB) trovato nella cartella 'resources/'".to_string()
+    let server_binary = resolve_server_binary(app_handle).ok_or_else(|| {
+        "Nessun eseguibile 'llamafile-server.exe' valido (> 1 MB) trovato in 'resources/'".to_string()
     })?;
 
-    let maybe_model_path = find_gguf_model(app_handle);
+    let maybe_model = resolve_model_path(app_handle, target_filename);
 
-    println!("[ZenScribe] Avvio processo Llamafile: {}", server_path.display());
-    if let Some(ref m) = maybe_model_path {
-        println!("[ZenScribe] Modello GGUF associato: {}", m.display());
-    } else {
-        println!("[ZenScribe] Utilizzo dei pesi del modello integrati nel pacchetto Llamafile.");
+    let chosen_display_name = match &maybe_model {
+        Some((_, name)) => name.clone(),
+        None => "Modello integrato".to_string(),
+    };
+
+    println!("[ZenScribe] Runner Llamafile: {}", server_binary.display());
+    if let Some((ref model_path, _)) = maybe_model {
+        println!("[ZenScribe] Modello caricato: {}", model_path.display());
     }
 
-    let mut cmd = Command::new(&server_path);
+    let mut cmd = Command::new(&server_binary);
 
-    // Parametri server universali compatibili con tutte le versioni di Llamafile:
-    // --server: modalità server HTTP OpenAI-compatible
+    // Parametri server OpenAI-compatible:
+    // --server: attiva il server HTTP
     // --port 8080: porta locale per ZenScribe
-    // --host 127.0.0.1: limitato a localhost per privacy e sicurezza
-    // -c 4096: contesto ridotto, il default del modello (131072) richiede ~14 GB di KV cache
+    // --host 127.0.0.1: localhost per totale privacy e sicurezza
+    // -c 4096: contesto
+    // --gpu disable: garantisce stabilità totale su tutti i sistemi Windows evitando crash di VRAM
     let mut args = vec![
         "--server".to_string(),
         "--port".to_string(),
@@ -407,16 +414,18 @@ fn spawn_llamafile_server<R: Runtime>(
         "127.0.0.1".to_string(),
         "-c".to_string(),
         "4096".to_string(),
+        "--gpu".to_string(),
+        "disable".to_string(),
     ];
 
-    if let Some(ref m) = maybe_model_path {
-        args.push("--model".to_string());
-        args.push(m.to_string_lossy().to_string());
+    if let Some((ref model_path, _)) = maybe_model {
+        args.push("-m".to_string());
+        args.push(model_path.to_string_lossy().to_string());
     }
 
     cmd.args(&args);
 
-    // Windows: imposta il flag CREATE_NO_WINDOW per eseguire il processo in background in modo totalmente invisibile
+    // Windows: imposta CREATE_NO_WINDOW per eseguire in background senza console nera
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -424,8 +433,7 @@ fn spawn_llamafile_server<R: Runtime>(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    // stdout/stderr su file di log (sovrascritto ad ogni avvio): evita deadlock di I/O e
-    // lascia traccia degli errori di avvio del server
+    // Log su file per evitare blocchi e permettere diagnostica
     let log_dir = app_handle
         .path()
         .app_log_dir()
@@ -446,7 +454,7 @@ fn spawn_llamafile_server<R: Runtime>(
     }
 
     let child = cmd.spawn().map_err(|e| format!("Impossibile avviare il processo Llamafile: {}", e))?;
-    Ok((child, chosen_name))
+    Ok((child, chosen_display_name))
 }
 
 // ============================================================================

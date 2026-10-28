@@ -5,8 +5,11 @@ import { ZenEditor } from './components/ZenEditor';
 import { StatusBar } from './components/StatusBar';
 import { AIPanel } from './components/AIPanel';
 import { SettingsModal } from './components/SettingsModal';
+import { ChapterSidebar, ChapterItem } from './components/ChapterSidebar';
+import { WorldbuildingModal } from './components/WorldbuildingModal';
 import { EditorSettings, ServerStatusInfo, EditorFont, EditorWidth, LocalModelInfo } from './types';
 import { checkLocalServerStatus, fetchAvailableModels, fetchActiveModel, switchLocalModel } from './services/localAi';
+import { elencaCapitoli, creaNuovoCapitolo, eliminaCapitolo, rinominaCapitolo } from './services/db';
 
 const DEFAULT_SETTINGS: EditorSettings = {
   font: 'serif',
@@ -35,6 +38,12 @@ export const App: React.FC = () => {
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const [wordCount, setWordCount] = useState(0);
   const [characterCount, setCharacterCount] = useState(0);
+
+  // Capitoli & SQLite
+  const [chapters, setChapters] = useState<ChapterItem[]>([]);
+  const [activeChapterId, setActiveChapterId] = useState<string>('capitolo-principale');
+  const [isChaptersOpen, setIsChaptersOpen] = useState(false);
+  const [isWorldbuildingOpen, setIsWorldbuildingOpen] = useState(false);
 
   // Modelli Locali
   const [availableModels, setAvailableModels] = useState<LocalModelInfo[]>([]);
@@ -65,6 +74,59 @@ export const App: React.FC = () => {
   const handleSaveSettings = (newSettings: EditorSettings) => {
     setSettings(newSettings);
     localStorage.setItem('zenscribe_settings', JSON.stringify(newSettings));
+  };
+
+  // Caricamento capitoli da SQLite
+  const refreshChapters = useCallback(async () => {
+    try {
+      const list = await elencaCapitoli();
+      if (list && list.length > 0) {
+        setChapters(list);
+        setActiveChapterId((prev) => (list.some((c) => c.id === prev) ? prev : list[0].id));
+      } else {
+        setChapters([
+          {
+            id: 'capitolo-principale',
+            title: 'Capitolo 1: La Chiarezza',
+            content: '',
+          },
+        ]);
+      }
+    } catch (e) {
+      console.warn('[DB] Errore lettura capitoli:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshChapters();
+  }, [refreshChapters]);
+
+  const handleCreateChapter = async () => {
+    try {
+      const newId = await creaNuovoCapitolo(`Capitolo ${chapters.length + 1}`);
+      await refreshChapters();
+      setActiveChapterId(newId);
+    } catch (e) {
+      console.error('[DB] Errore creazione capitolo:', e);
+    }
+  };
+
+  const handleDeleteChapter = async (id: string) => {
+    try {
+      await eliminaCapitolo(id);
+      await refreshChapters();
+    } catch (e) {
+      console.error('[DB] Errore eliminazione capitolo:', e);
+    }
+  };
+
+  const handleRenameChapter = async (id: string, newTitle: string) => {
+    try {
+      await rinominaCapitolo(id, newTitle);
+      await refreshChapters();
+    } catch (e) {
+      console.error('[DB] Errore rinomina capitolo:', e);
+    }
   };
 
   // Caricamento modelli locali e modello attivo
@@ -155,6 +217,8 @@ export const App: React.FC = () => {
             theme: settings.theme === 'dark' ? 'light' : 'dark',
           })
         }
+        onToggleChapters={() => setIsChaptersOpen(!isChaptersOpen)}
+        onOpenWorldbuilding={() => setIsWorldbuildingOpen(true)}
         onOpenAIPanel={() => {
           if (editorInstance) {
             const { from, to } = editorInstance.state.selection;
@@ -166,8 +230,24 @@ export const App: React.FC = () => {
         }}
       />
 
+      {/* Barra Laterale Capitoli (SQLite) */}
+      <ChapterSidebar
+        isOpen={isChaptersOpen}
+        chapters={chapters}
+        activeChapterId={activeChapterId}
+        onSelectChapter={(id) => {
+          setActiveChapterId(id);
+          setIsChaptersOpen(false);
+        }}
+        onCreateChapter={handleCreateChapter}
+        onDeleteChapter={handleDeleteChapter}
+        onRenameChapter={handleRenameChapter}
+        onClose={() => setIsChaptersOpen(false)}
+      />
+
       {/* Editor Centrale (Focus Principale dell'Harness) */}
       <ZenEditor
+        activeChapterId={activeChapterId}
         font={settings.font}
         fontSize={settings.fontSize}
         lineHeight={settings.lineHeight}
@@ -179,6 +259,7 @@ export const App: React.FC = () => {
         }}
         onEditorReady={(editor) => setEditorInstance(editor)}
         onOpenAIWithSelection={handleOpenAIWithSelection}
+        onChapterSaved={refreshChapters}
       />
 
       {/* Barra di Stato Inferiore */}
@@ -211,6 +292,12 @@ export const App: React.FC = () => {
           setIsAIPanelOpen(false);
           setIsSettingsOpen(true);
         }}
+      />
+
+      {/* Modal Bibbia del Romanzo (Personaggi & Luoghi da SQLite) */}
+      <WorldbuildingModal
+        isOpen={isWorldbuildingOpen}
+        onClose={() => setIsWorldbuildingOpen(false)}
       />
 
       {/* Modal Impostazioni con Switch Modelli */}

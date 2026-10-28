@@ -97,8 +97,12 @@ function cleanModelOutput(raw: string): string {
 /**
  * Invia una richiesta di correzione ortografica/grammaticale al modello locale
  */
-export async function correctSpellingLocal(text: string): Promise<string> {
-  const prompt = `Sei un correttore bozze esperto e invisibile per uno scrittore. Correggi esclusivamente errori grammaticali, ortografici e refusi nel seguente testo in italiano, mantenendo intatto lo stile, la punteggiatura narrativa e la voce dell'autore. Rispondi SOLO con il testo corretto, senza commenti o spiegazioni.\n\nTesto:\n"""\n${text}\n"""`;
+export async function correctSpellingLocal(text: string, context?: string): Promise<string> {
+  const systemPrompt = context
+    ? `Sei un correttore bozze esperto per uno scrittore. Ecco il contesto del racconto (personaggi e luoghi):\n${context}\n\nCorreggi esclusivamente refusi, ortografia e grammatica mantenendo inalterata la voce dell'autore. Rispondi SOLO con il testo corretto.`
+    : "Sei un editor e correttore di bozze letterario preciso ed essenziale. Rispondi SOLO con il testo corretto, senza commenti.";
+
+  const prompt = `Correggi esclusivamente errori grammaticali, ortografici e refusi nel seguente testo in italiano, mantenendo intatto lo stile, la punteggiatura narrativa e la voce dell'autore. Rispondi SOLO con il testo corretto, senza spiegazioni o premesse.\n\nTesto:\n"""\n${text}\n"""`;
 
   const response = await fetch(`${LOCAL_SERVER_URL}/v1/chat/completions`, {
     method: "POST",
@@ -106,8 +110,9 @@ export async function correctSpellingLocal(text: string): Promise<string> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      model: "default",
       messages: [
-        { role: "system", content: "Sei un editor e correttore di bozze letterario preciso ed essenziale." },
+        { role: "system", content: systemPrompt },
         { role: "user", content: prompt },
       ],
       temperature: 0.2,
@@ -127,7 +132,11 @@ export async function correctSpellingLocal(text: string): Promise<string> {
 /**
  * Riformula o migliora la fluidità del testo localmente
  */
-export async function rephraseTextLocal(text: string): Promise<string> {
+export async function rephraseTextLocal(text: string, context?: string): Promise<string> {
+  const systemPrompt = context
+    ? `Sei un assistente di scrittura letteraria. Ecco il contesto del racconto (personaggi e luoghi):\n${context}\n\nRiscrivi migliorando fluidità e ritmo preservando i personaggi e il significato.`
+    : "Sei un assistente di scrittura che perfeziona lo stile senza alterare la voce originale.";
+
   const prompt = `Riscrivi il seguente testo migliorandone la fluidità sintattica e il ritmo espressivo, preservando il significato originale. Rispondi ESCLUSIVAMENTE con la nuova versione.\n\nTesto:\n"""\n${text}\n"""`;
 
   const response = await fetch(`${LOCAL_SERVER_URL}/v1/chat/completions`, {
@@ -136,8 +145,9 @@ export async function rephraseTextLocal(text: string): Promise<string> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      model: "default",
       messages: [
-        { role: "system", content: "Sei un assistente di scrittura che perfeziona lo stile senza alterare la voce originale." },
+        { role: "system", content: systemPrompt },
         { role: "user", content: prompt },
       ],
       temperature: 0.4,

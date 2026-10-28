@@ -188,6 +188,71 @@ export async function caricaCapitolo(id: string): Promise<{ id: string; title: s
 }
 
 /**
+ * Legge tutti i capitoli salvati nel database in ordine di inserimento
+ */
+export async function elencaCapitoli(): Promise<Array<{ id: string; title: string; content: string }>> {
+  const db = await inizializzaDatabase();
+  const rows = await db.select<Array<{ id: string; title: string; content: string }>>(
+    `SELECT id, title, content FROM documents ORDER BY rowid ASC`
+  );
+  return rows;
+}
+
+/**
+ * Crea un nuovo capitolo con titolo predefinito e testo iniziale vuoto
+ */
+export async function creaNuovoCapitolo(title?: string): Promise<string> {
+  const db = await inizializzaDatabase();
+  const id = `capitolo-${Date.now()}`;
+  const chapterTitle = title?.trim() || "Nuovo Capitolo";
+  const defaultContent = `<h1>${chapterTitle}</h1><p>Inizia a scrivere questo capitolo...</p>`;
+  await db.execute(
+    `INSERT INTO documents (id, title, content) VALUES ($1, $2, $3)`,
+    [id, chapterTitle, defaultContent]
+  );
+  return id;
+}
+
+/**
+ * Elimina un capitolo dal database
+ */
+export async function eliminaCapitolo(id: string): Promise<void> {
+  const db = await inizializzaDatabase();
+  await db.execute(`DELETE FROM documents WHERE id = $1`, [id]);
+}
+
+/**
+ * Rinomina il titolo di un capitolo
+ */
+export async function rinominaCapitolo(id: string, newTitle: string): Promise<void> {
+  const db = await inizializzaDatabase();
+  await db.execute(`UPDATE documents SET title = $1 WHERE id = $2`, [newTitle, id]);
+}
+
+/**
+ * Elimina un nodo (personaggio, luogo) dalla mappa concettuale
+ */
+export async function eliminaNodo(id: string): Promise<void> {
+  const db = await inizializzaDatabase();
+  await db.execute(`DELETE FROM nodes WHERE id = $1`, [id]);
+}
+
+/**
+ * Restituisce una sintesi testuale di tutti i nodi (personaggi/luoghi) da fornire come contesto all'AI
+ */
+export async function ottieniContestoNarrativo(): Promise<string> {
+  try {
+    const mappa = await ottieniMappaConcettuale();
+    if (mappa.nodes.length === 0) return "";
+    return mappa.nodes
+      .map((n) => `• [${n.type.toUpperCase()}] ${n.name}: ${n.description}`)
+      .join("\n");
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Restituisce tutti i nodi e tutti i collegamenti in un unico oggetto,
  * con i metadati già convertiti da JSON.
  */

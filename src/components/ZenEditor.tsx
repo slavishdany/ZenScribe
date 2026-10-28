@@ -11,6 +11,7 @@ const DB_SAVE_DELAY_MS = 800;
 
 interface ZenEditorProps {
   initialContent?: string;
+  activeChapterId?: string;
   font: EditorFont;
   fontSize: number;
   lineHeight: number;
@@ -19,6 +20,7 @@ interface ZenEditorProps {
   onUpdateCounts: (words: number, characters: number) => void;
   onEditorReady: (editor: any) => void;
   onOpenAIWithSelection: (text: string) => void;
+  onChapterSaved?: () => void;
 }
 
 const DEFAULT_DOC = `
@@ -29,6 +31,7 @@ const DEFAULT_DOC = `
 
 export const ZenEditor: React.FC<ZenEditorProps> = ({
   initialContent,
+  activeChapterId = MAIN_DOCUMENT_ID,
   font,
   fontSize,
   lineHeight,
@@ -37,10 +40,14 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
   onUpdateCounts,
   onEditorReady,
   onOpenAIWithSelection,
+  onChapterSaved,
 }) => {
-  const localSaved = localStorage.getItem('zenscribe_saved_document');
+  const localSaved = localStorage.getItem(`zenscribe_saved_${activeChapterId}`);
   const savedContent = localSaved || initialContent || DEFAULT_DOC;
   const dbSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentChapterRef = useRef(activeChapterId);
+
+  currentChapterRef.current = activeChapterId;
 
   const editor = useEditor({
     extensions: [
@@ -66,31 +73,35 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
       const chars = editor.storage.characterCount.characters();
       onUpdateCounts(words, chars);
 
-      // Salvataggio automatico locale
       const html = editor.getHTML();
-      localStorage.setItem('zenscribe_saved_document', html);
+      const chapId = currentChapterRef.current;
+      localStorage.setItem(`zenscribe_saved_${chapId}`, html);
 
-      // Salvataggio su SQLite con debounce, titolo ricavato dalla prima riga
+      // Salvataggio su SQLite con debounce
       if (dbSaveTimer.current) clearTimeout(dbSaveTimer.current);
       dbSaveTimer.current = setTimeout(() => {
         const firstLine = editor.getText().split('\n').find((l) => l.trim() !== '') ?? '';
         const title = firstLine.trim().slice(0, 80) || 'Senza titolo';
-        salvaCapitolo(MAIN_DOCUMENT_ID, title, html).catch((err) =>
-          console.warn('[DB] Salvataggio capitolo non riuscito:', err)
-        );
+        salvaCapitolo(chapId, title, html)
+          .then(() => onChapterSaved?.())
+          .catch((err) => console.warn('[DB] Salvataggio capitolo non riuscito:', err));
       }, DB_SAVE_DELAY_MS);
     },
   });
 
-  // Se il salvataggio locale manca (es. dati del browser puliti) ripristina dal database
+  // Carica il contenuto quando cambia il capitolo attivo
   useEffect(() => {
-    if (!editor || localSaved) return;
-    caricaCapitolo(MAIN_DOCUMENT_ID)
+    if (!editor || !activeChapterId) return;
+    caricaCapitolo(activeChapterId)
       .then((doc) => {
-        if (doc && doc.content) editor.commands.setContent(doc.content);
+        if (doc && doc.content) {
+          editor.commands.setContent(doc.content);
+        } else {
+          editor.commands.setContent(`<h1>Nuovo Capitolo</h1><p></p>`);
+        }
       })
-      .catch((err) => console.warn('[DB] Ripristino capitolo non riuscito:', err));
-  }, [editor]);
+      .catch((err) => console.warn('[DB] Caricamento capitolo non riuscito:', err));
+  }, [editor, activeChapterId]);
 
   // Evita un salvataggio pendente dopo lo smontaggio del componente
   useEffect(() => {
