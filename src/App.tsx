@@ -9,7 +9,7 @@ import { ChapterSidebar, ChapterItem } from './components/ChapterSidebar';
 import { WorldbuildingModal } from './components/WorldbuildingModal';
 import { EditorSettings, ServerStatusInfo, EditorFont, EditorWidth, LocalModelInfo } from './types';
 import { checkLocalServerStatus, fetchAvailableModels, fetchActiveModel, switchLocalModel } from './services/localAi';
-import { elencaCapitoli, creaNuovoCapitolo, eliminaCapitolo, rinominaCapitolo } from './services/db';
+import { elencaCapitoli, creaNuovoCapitolo, eliminaCapitolo, rinominaCapitolo, salvaCapitolo } from './services/db';
 
 const DEFAULT_SETTINGS: EditorSettings = {
   font: 'serif',
@@ -126,6 +126,18 @@ export const App: React.FC = () => {
       await refreshChapters();
     } catch (e) {
       console.error('[DB] Errore rinomina capitolo:', e);
+    }
+  };
+
+  const handleCreateChapterFromPlot = async (title: string, content: string) => {
+    try {
+      const id = `capitolo-trama-${Date.now()}`;
+      await salvaCapitolo(id, title, content);
+      await refreshChapters();
+      setActiveChapterId(id);
+      setIsWorldbuildingOpen(false);
+    } catch (e) {
+      console.error('[DB] Errore salvataggio capitolo trama:', e);
     }
   };
 
@@ -297,7 +309,13 @@ export const App: React.FC = () => {
       {/* Modal Bibbia del Romanzo (Personaggi & Luoghi da SQLite) */}
       <WorldbuildingModal
         isOpen={isWorldbuildingOpen}
+        geminiApiKey={settings.geminiApiKey}
         onClose={() => setIsWorldbuildingOpen(false)}
+        onCreateChapterFromPlot={handleCreateChapterFromPlot}
+        onOpenSettings={() => {
+          setIsWorldbuildingOpen(false);
+          setIsSettingsOpen(true);
+        }}
       />
 
       {/* Modal Impostazioni con Switch Modelli */}

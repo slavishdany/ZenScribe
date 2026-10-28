@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, Cpu, Check, Copy, ArrowRight, Loader2, X, RefreshCw } from 'lucide-react';
 import { correctSpellingLocal, rephraseTextLocal } from '../services/localAi';
-import { continueWritingCreative, expandConceptCreative } from '../services/geminiAi';
+import { continueWritingCreative, expandConceptCreative, generatePlotFromBible } from '../services/geminiAi';
 import { ottieniContestoNarrativo } from '../services/db';
 import { ServerStatusInfo } from '../types';
 
@@ -46,8 +46,8 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAction = async (actionType: 'spellcheck' | 'rephrase' | 'continue' | 'expand') => {
-    if (!inputText.trim()) {
+  const handleAction = async (actionType: 'spellcheck' | 'rephrase' | 'continue' | 'expand' | 'plot') => {
+    if (actionType !== 'plot' && !inputText.trim()) {
       setErrorMessage("Inserisci o seleziona una porzione di testo prima di procedere.");
       return;
     }
@@ -80,6 +80,14 @@ export const AIPanel: React.FC<AIPanelProps> = ({
           throw new Error("Chiave API di Gemini non configurata. Inseriscila nelle impostazioni.");
         }
         output = await expandConceptCreative(geminiApiKey, inputText);
+      } else if (actionType === 'plot') {
+        if (!geminiApiKey) {
+          throw new Error("Chiave API di Gemini non configurata. Inseriscila nelle impostazioni.");
+        }
+        if (!context.trim()) {
+          throw new Error("Aggiungi prima personaggi o luoghi nella Bibbia del Romanzo (icona Personaggi in alto).");
+        }
+        output = await generatePlotFromBible(geminiApiKey, context, inputText);
       }
       setResultText(output);
     } catch (err: any) {
@@ -194,6 +202,14 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                 >
                   <span>Espandi e arricchisci idea</span>
                   {isLoading && activeAction === 'expand' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                </button>
+                <button
+                  disabled={isLoading || !geminiApiKey}
+                  onClick={() => handleAction('plot')}
+                  className="w-full text-left px-2.5 py-1.5 text-xs font-medium rounded bg-white dark:bg-stone-800 hover:bg-stone-50 dark:hover:bg-stone-700 border border-indigo-200 dark:border-indigo-800/60 disabled:opacity-40 flex items-center justify-between transition-colors text-indigo-700 dark:text-indigo-300"
+                >
+                  <span>Genera Trama dalla Bibbia</span>
+                  {isLoading && activeAction === 'plot' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 </button>
               </div>
             </div>

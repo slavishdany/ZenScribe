@@ -1,13 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Compass, User, MapPin, Bookmark, Plus, Trash2, X, Sparkles, Edit2, Copy, Check } from 'lucide-react';
-import { GraphNode, creaNodo, eliminaNodo, ottieniMappaConcettuale } from '../services/db';
+import {
+  Compass, User, MapPin, Bookmark, Plus, Trash2, X, Sparkles,
+  Edit2, Copy, Check, Loader2, BookOpen, ChevronDown, ChevronUp
+} from 'lucide-react';
+import { GraphNode, creaNodo, eliminaNodo, ottieniMappaConcettuale, ottieniContestoNarrativo } from '../services/db';
+import { generatePlotFromBible } from '../services/geminiAi';
 
 interface WorldbuildingModalProps {
   isOpen: boolean;
+  geminiApiKey?: string;
   onClose: () => void;
+  onCreateChapterFromPlot?: (title: string, content: string) => Promise<void>;
+  onOpenSettings?: () => void;
 }
 
-export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({ isOpen, onClose }) => {
+export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
+  isOpen,
+  geminiApiKey,
+  onClose,
+  onCreateChapterFromPlot,
+  onOpenSettings,
+}) => {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [filterType, setFilterType] = useState<string>('all');
   const [newName, setNewName] = useState('');
@@ -16,6 +29,15 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({ isOpen, 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Generatore di trama con Gemini
+  const [isPlotDrawerOpen, setIsPlotDrawerOpen] = useState(false);
+  const [plotGuidance, setPlotGuidance] = useState('');
+  const [isGeneratingPlot, setIsGeneratingPlot] = useState(false);
+  const [generatedPlot, setGeneratedPlot] = useState('');
+  const [plotError, setPlotError] = useState<string | null>(null);
+  const [plotCopied, setPlotCopied] = useState(false);
+  const [plotSavedFeedback, setPlotSavedFeedback] = useState<string | null>(null);
 
   const loadNodes = async () => {
     try {
@@ -32,6 +54,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({ isOpen, 
       setEditingNodeId(null);
       setNewName('');
       setNewDesc('');
+      setPlotSavedFeedback(null);
     }
   }, [isOpen]);
 
@@ -90,6 +113,59 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({ isOpen, 
     }
   };
 
+  // Generazione Trama tramite Gemini Cloud
+  const handleGeneratePlot = async () => {
+    if (!geminiApiKey || !geminiApiKey.trim()) {
+      setPlotError("Per generare la trama serve la chiave API di Gemini. Configurala nelle impostazioni.");
+      return;
+    }
+
+    const bibleContent = await ottieniContestoNarrativo();
+    if (!bibleContent.trim()) {
+      setPlotError("Aggiungi prima almeno un personaggio o un luogo nella Bibbia per dare materiale a Gemini!");
+      return;
+    }
+
+    setIsGeneratingPlot(true);
+    setPlotError(null);
+    setPlotSavedFeedback(null);
+
+    try {
+      const plot = await generatePlotFromBible(geminiApiKey, bibleContent, plotGuidance);
+      setGeneratedPlot(plot);
+    } catch (err: any) {
+      setPlotError(err.message || "Errore durante la generazione della trama.");
+    } finally {
+      setIsGeneratingPlot(false);
+    }
+  };
+
+  // Salvataggio della trama generata come nuovo capitolo in SQLite
+  const handleSavePlotAsChapter = async () => {
+    if (!generatedPlot) return;
+    if (onCreateChapterFromPlot) {
+      const title = "Schema di Trama";
+      const htmlContent = `<h1>${title}</h1><pre style="white-space: pre-wrap; font-family: inherit;">${generatedPlot.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
+      await onCreateChapterFromPlot(title, htmlContent);
+      setPlotSavedFeedback("Trama salvata come nuovo capitolo nell'elenco capitoli!");
+      setTimeout(() => setPlotSavedFeedback(null), 3500);
+    }
+  };
+
+  // Salvataggio della trama come scheda 'nota' nella bibbia stessa
+  const handleSavePlotAsNote = async () => {
+    if (!generatedPlot) return;
+    try {
+      const id = `node-trama-${Date.now()}`;
+      await creaNodo(id, 'nota', 'Trama Principale', generatedPlot.slice(0, 1000) + (generatedPlot.length > 1000 ? '...' : ''));
+      await loadNodes();
+      setPlotSavedFeedback("Trama archiviata tra le schede (Note) della Bibbia!");
+      setTimeout(() => setPlotSavedFeedback(null), 3500);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const filteredNodes = nodes.filter((n) => filterType === 'all' || n.type === filterType);
 
   const getTypeIcon = (type: string) => {
@@ -102,7 +178,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({ isOpen, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in select-text">
-      <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+      <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-5 py-3 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between bg-stone-50/50 dark:bg-stone-950/40 select-none">
           <div className="flex items-center space-x-2">
@@ -112,17 +188,124 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({ isOpen, 
                 Bibbia del Romanzo & Personaggi
               </h3>
               <p className="text-[11px] text-stone-500">
-                Archivia e modifica dettagli su personaggi, luoghi e note. Verranno usati come contesto dall'AI.
+                Schede su personaggi, luoghi e note. Puoi usarle per generare una trama completa con Gemini.
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-400 hover:text-stone-600 dark:hover:text-stone-200"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setIsPlotDrawerOpen(!isPlotDrawerOpen)}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm transition-colors ${
+                isPlotDrawerOpen
+                  ? 'bg-indigo-700 text-white'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              }`}
+              title="Genera trama a partire da queste schede con Gemini Cloud"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Genera Trama</span>
+              {isPlotDrawerOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-400 hover:text-stone-600 dark:hover:text-stone-200"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
+
+        {/* Cassetto Generatore di Trama (Gemini) */}
+        {isPlotDrawerOpen && (
+          <div className="p-4 border-b border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-3 animate-fade-in">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-indigo-900 dark:text-indigo-200 flex items-center space-x-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>Generatore di Trama da Personaggi & Luoghi (Gemini Flash)</span>
+              </span>
+              {!geminiApiKey && onOpenSettings && (
+                <button
+                  onClick={onOpenSettings}
+                  className="text-[11px] text-indigo-600 dark:text-indigo-400 underline font-medium"
+                >
+                  Configura API Key Gemini
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                placeholder="Genere o indicazioni desiderate (es: Thriller psicologico cupo con finale a sorpresa)..."
+                value={plotGuidance}
+                onChange={(e) => setPlotGuidance(e.target.value)}
+                className="flex-1 text-xs p-2 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-stone-900 text-stone-800 dark:text-stone-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <button
+                onClick={handleGeneratePlot}
+                disabled={isGeneratingPlot}
+                className="flex items-center justify-center space-x-1.5 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {isGeneratingPlot ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                <span>{isGeneratingPlot ? 'Elaborazione trama...' : 'Crea Trama'}</span>
+              </button>
+            </div>
+
+            {plotError && (
+              <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-xs text-rose-700 dark:text-rose-300">
+                {plotError}
+              </div>
+            )}
+
+            {generatedPlot && (
+              <div className="space-y-2 pt-2 border-t border-indigo-200/60 dark:border-indigo-900/40">
+                <div className="flex items-center justify-between text-xs font-semibold text-stone-700 dark:text-stone-300">
+                  <span>Proposta di Trama Strutturata:</span>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(generatedPlot);
+                        setPlotCopied(true);
+                        setTimeout(() => setPlotCopied(false), 2000);
+                      }}
+                      className="flex items-center space-x-1 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 text-xs"
+                    >
+                      {plotCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{plotCopied ? 'Copiato!' : 'Copia'}</span>
+                    </button>
+                    {onCreateChapterFromPlot && (
+                      <button
+                        onClick={handleSavePlotAsChapter}
+                        className="flex items-center space-x-1 px-2.5 py-1 rounded bg-white dark:bg-stone-800 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-medium"
+                      >
+                        <BookOpen className="w-3 h-3" />
+                        <span>Crea Capitolo da Trama</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={handleSavePlotAsNote}
+                      className="flex items-center space-x-1 px-2.5 py-1 rounded bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 text-xs font-medium"
+                    >
+                      <Bookmark className="w-3 h-3" />
+                      <span>Salva in Note</span>
+                    </button>
+                  </div>
+                </div>
+
+                {plotSavedFeedback && (
+                  <div className="p-2 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-xs text-emerald-700 dark:text-emerald-300 flex items-center space-x-1.5">
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{plotSavedFeedback}</span>
+                  </div>
+                )}
+
+                <div className="p-3 bg-white dark:bg-stone-900 border border-indigo-100 dark:border-indigo-900/40 rounded-lg text-xs leading-relaxed max-h-56 overflow-y-auto whitespace-pre-wrap font-sans text-stone-800 dark:text-stone-200 shadow-inner">
+                  {generatedPlot}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Form Aggiunta / Modifica Elemento */}
         <form
