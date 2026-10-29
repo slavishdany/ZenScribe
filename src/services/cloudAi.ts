@@ -31,27 +31,60 @@ export async function generateWithCloudProvider(
   switch (providerType) {
     case "gemini": {
       const genAI = new GoogleGenerativeAI(config.apiKey);
-      let modelName = config.model || "gemini-3.8-flash";
-      // Auto-migrazione dai modelli deprecati da Google (es. gemini-2.0-flash -> gemini-3.8-flash)
-      if (modelName.includes("2.0") || modelName.includes("2.5") || !modelName.trim()) {
-        modelName = "gemini-3.8-flash";
+      let primaryModel = config.model || "gemini-3.8-flash";
+      if (primaryModel.includes("2.0") || primaryModel.includes("2.5") || !primaryModel.trim()) {
+        primaryModel = "gemini-3.8-flash";
       }
 
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        systemInstruction,
-      });
+      // Modelli candidati in ordine di priorità: se un modello restituisce 503 (sovraccarico temporaneo di Google), effettua il fallback automatico
+      const candidateModels = [
+        primaryModel,
+        primaryModel !== "gemini-1.5-flash" ? "gemini-1.5-flash" : "gemini-3.8-flash",
+        "gemini-1.5-pro",
+      ].filter((m, i, arr) => arr.indexOf(m) === i);
 
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: options.temperature ?? 0.7,
-          maxOutputTokens: options.maxTokens ?? 8192,
-        },
-      });
+      let lastError: any = null;
 
-      const response = await result.response;
-      return response.text();
+      for (const modelToTry of candidateModels) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: modelToTry,
+            systemInstruction,
+          });
+
+          const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: options.temperature ?? 0.7,
+              maxOutputTokens: options.maxTokens ?? 8192,
+            },
+          });
+
+          const response = await result.response;
+          return response.text();
+        } catch (err: any) {
+          lastError = err;
+          const errMsg = err?.message || String(err);
+
+          // Se l'errore è un 503 (High Demand / Sovraccarico temporaneo) o 404 (modello rimosso), prova con il modello di riserva
+          if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("404")) {
+            console.warn(`[Gemini] Modello '${modelToTry}' sovraccarico o non disponibile (${errMsg}). Tentativo con modello fallback...`);
+            await new Promise((res) => setTimeout(res, 800));
+            continue;
+          }
+
+          // Per altri errori (chiave errata, violazione policy), lancia subito
+          throw err;
+        }
+      }
+
+      if (lastError?.message?.includes("503") || lastError?.message?.includes("high demand")) {
+        throw new Error(
+          "I server di Google AI Studio stanno registrando un picco temporaneo di traffico (errore 503 High Demand). Riprova tra pochi istanti."
+        );
+      }
+
+      throw lastError;
     }
 
     case "openai":
