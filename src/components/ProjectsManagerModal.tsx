@@ -273,15 +273,50 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
     }
   };
 
+  const normalizeManifestObject = (raw: any): ProjectManifest => {
+    const proj = raw.project || raw;
+    return {
+      exportDate: raw.exportDate || raw.exportedAt || new Date().toISOString(),
+      version: raw.version || raw.appVersion || '1.1.0',
+      appName: raw.appName || 'ZenScribe',
+      project: {
+        id: proj.id,
+        title: (proj.title || raw.title || 'Progetto Senza Titolo').trim(),
+        genre: proj.genre || raw.genre || '',
+        description: proj.description || raw.description || '',
+        styleTone: proj.styleTone || proj.style_tone || raw.styleTone || raw.style_tone || '',
+        narrativeVoice: proj.narrativeVoice || proj.narrative_voice || raw.narrativeVoice || raw.narrative_voice || '',
+        targetAudience: proj.targetAudience || proj.target_audience || raw.targetAudience || raw.target_audience || '',
+        narrativeNotes: proj.narrativeNotes || proj.narrative_notes || raw.narrativeNotes || raw.narrative_notes || '',
+        exportFolder: proj.exportFolder || proj.export_folder || raw.exportFolder || raw.export_folder || null,
+        autoExportMinutes: proj.autoExportMinutes || proj.auto_export_minutes || raw.autoExportMinutes || raw.auto_export_minutes || 0,
+        createdAt: proj.createdAt || raw.createdAt || Date.now(),
+        updatedAt: proj.updatedAt || raw.updatedAt || Date.now(),
+      },
+      chapters: Array.isArray(raw.chapters)
+        ? raw.chapters
+        : (raw.project && Array.isArray(raw.project.chapters) ? raw.project.chapters : []),
+      worldbuilding: {
+        nodes: Array.isArray(raw.worldbuilding?.nodes)
+          ? raw.worldbuilding.nodes
+          : (Array.isArray(raw.nodes) ? raw.nodes : []),
+        edges: Array.isArray(raw.worldbuilding?.edges)
+          ? raw.worldbuilding.edges
+          : (Array.isArray(raw.edges) ? raw.edges : []),
+      },
+    };
+  };
+
   // Selezione file o cartella per importazione
   const handlePickManifestFile = async () => {
     try {
       const filePath = await selectManifestFile();
       if (!filePath) return;
       const jsonContent = await readManifestFile(filePath);
-      const parsed: ProjectManifest = JSON.parse(jsonContent);
+      const raw = JSON.parse(jsonContent);
+      const parsed = normalizeManifestObject(raw);
       setImportPathInfo(filePath);
-      setImportManifestText(jsonContent);
+      setImportManifestText(JSON.stringify(parsed));
       setImportParsedManifest(parsed);
     } catch (e: any) {
       showToast(`Impossibile leggere il file manifest: ${e.message}`, 'error');
@@ -293,9 +328,10 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
       const folderPath = await selectProjectFolder();
       if (!folderPath) return;
       const jsonContent = await readManifestFile(folderPath);
-      const parsed: ProjectManifest = JSON.parse(jsonContent);
+      const raw = JSON.parse(jsonContent);
+      const parsed = normalizeManifestObject(raw);
       setImportPathInfo(folderPath);
-      setImportManifestText(jsonContent);
+      setImportManifestText(JSON.stringify(parsed));
       setImportParsedManifest(parsed);
     } catch (e: any) {
       showToast(`Impossibile leggere l'indice dalla cartella: ${e.message}`, 'error');
@@ -962,17 +998,19 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
                     </span>
                     <span className="text-[10px] text-stone-500">
                       Esportato il:{' '}
-                      {new Date(importParsedManifest.exportDate).toLocaleDateString('it-IT', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
+                      {importParsedManifest.exportDate && !isNaN(new Date(importParsedManifest.exportDate).getTime())
+                        ? new Date(importParsedManifest.exportDate).toLocaleDateString('it-IT', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric',
+                          })
+                        : 'Recente'}
                     </span>
                   </div>
 
                   <div className="bg-white dark:bg-stone-900 p-3 rounded-lg border border-stone-200 dark:border-stone-800 text-xs space-y-1">
                     <div className="font-semibold text-stone-900 dark:text-stone-100 text-sm">
-                      {importParsedManifest.project.title}
+                      {importParsedManifest.project?.title || 'Progetto Senza Titolo'}
                     </div>
                     <div className="text-stone-500">
                       Genere: <span className="text-stone-700 dark:text-stone-300 font-medium">{importParsedManifest.project.genre || 'Non specificato'}</span>

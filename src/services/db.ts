@@ -873,40 +873,101 @@ export async function esportaSnapshotProgetto(
 }
 
 /**
- * Reimporta un intero progetto a partire da una stringa JSON manifest nel database SQLite
+ * Converte testo Markdown semplice in HTML compatibile con l'editor TipTap
+ */
+function markdownToEditorHtml(md: string): string {
+  if (!md || md.trim() === '') return '<p></p>';
+  if (/<[a-z][\s\S]*>/i.test(md)) {
+    return md;
+  }
+  const lines = md.split(/\r?\n/);
+  const parts: string[] = [];
+  let pBuffer: string[] = [];
+
+  const flushP = () => {
+    if (pBuffer.length > 0) {
+      parts.push(`<p>${pBuffer.join('<br/>')}</p>`);
+      pBuffer = [];
+    }
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushP();
+    } else if (trimmed.startsWith('### ')) {
+      flushP();
+      parts.push(`<h3>${trimmed.slice(4)}</h3>`);
+    } else if (trimmed.startsWith('## ')) {
+      flushP();
+      parts.push(`<h2>${trimmed.slice(3)}</h2>`);
+    } else if (trimmed.startsWith('# ')) {
+      flushP();
+      parts.push(`<h1>${trimmed.slice(2)}</h1>`);
+    } else if (trimmed.startsWith('> ')) {
+      flushP();
+      parts.push(`<blockquote><p>${trimmed.slice(2)}</p></blockquote>`);
+    } else {
+      let formatted = trimmed
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>');
+      pBuffer.push(formatted);
+    }
+  }
+  flushP();
+
+  return parts.join('') || '<p></p>';
+}
+
+/**
+ * Reimporta un intero progetto a partire da una stringa JSON manifest nel database SQLite.
+ * Supporta sia il formato nativo zenscribe.manifest.json, sia strutture flat zenscribe.project.json
  */
 export async function importaProgettoCompleto(
-  manifestRaw: string | ProjectManifest
+  manifestRaw: string | ProjectManifest | any
 ): Promise<ProjectItem> {
   const db = await inizializzaDatabase();
-  let manifest: ProjectManifest;
+  let raw: any;
 
-  if (typeof manifestRaw === "string") {
+  if (typeof manifestRaw === 'string') {
     try {
-      manifest = JSON.parse(manifestRaw);
+      raw = JSON.parse(manifestRaw);
     } catch (e: any) {
       throw new Error(`Il file selezionato non è un JSON valido: ${e.message}`);
     }
   } else {
-    manifest = manifestRaw;
+    raw = manifestRaw;
   }
 
-  if (!manifest || !manifest.project || !manifest.project.title) {
-    throw new Error("L'indice manifest non contiene i dati minimi del progetto.");
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('I dati di importazione forniti non contengono una struttura valida.');
   }
 
-  const pData = manifest.project;
+  // Estrae i dati del progetto supportando sia { project: {...} } che campi alla radice
+  const pData = raw.project || raw;
+  const projectTitle = (pData.title || raw.title || 'Progetto Importato').trim();
+
   const now = Date.now();
 
   // Verifica se l'ID esiste già nel DB per evitare sovrascritture accidentali
   let targetId = pData.id || `proj-${now}`;
-  let targetTitle = pData.title;
+  let targetTitle = projectTitle;
 
   const existing = await caricaProgetto(targetId);
   if (existing) {
     targetId = `proj-${now}`;
-    targetTitle = `${pData.title} (Importato)`;
+    targetTitle = `${projectTitle} (Importato)`;
   }
+
+  const genre = pData.genre || raw.genre || '';
+  const description = pData.description || raw.description || '';
+  const styleTone = pData.styleTone || pData.style_tone || raw.styleTone || raw.style_tone || '';
+  const narrativeVoice = pData.narrativeVoice || pData.narrative_voice || raw.narrativeVoice || raw.narrative_voice || '';
+  const targetAudience = pData.targetAudience || pData.target_audience || raw.targetAudience || raw.target_audience || '';
+  const narrativeNotes = pData.narrativeNotes || pData.narrative_notes || raw.narrativeNotes || raw.narrative_notes || '';
+  const exportFolder = pData.exportFolder || pData.export_folder || raw.exportFolder || raw.export_folder || null;
+  const autoExportMinutes = pData.autoExportMinutes || pData.auto_export_minutes || raw.autoExportMinutes || raw.auto_export_minutes || 0;
+  const createdAt = pData.createdAt || raw.createdAt || now;
 
   // Inserisce il progetto nel DB SQLite
   await db.execute(
@@ -915,28 +976,33 @@ export async function importaProgettoCompleto(
     [
       targetId,
       targetTitle,
-      pData.genre || "",
-      pData.description || "",
-      pData.styleTone || "",
-      pData.narrativeVoice || "",
-      pData.targetAudience || "",
-      pData.narrativeNotes || "",
-      pData.exportFolder || null,
-      pData.autoExportMinutes || 0,
+      genre,
+      description,
+      styleTone,
+      narrativeVoice,
+      targetAudience,
+      narrativeNotes,
+      exportFolder,
+      autoExportMinutes,
       now,
-      pData.createdAt || now,
+      createdAt,
       now,
     ]
   );
 
   // Inserisce i capitoli
-  if (manifest.chapters && Array.isArray(manifest.chapters)) {
-    for (let i = 0; i < manifest.chapters.length; i++) {
-      const ch = manifest.chapters[i];
+  const chaptersList = Array.isArray(raw.chapters)
+    ? raw.chapters
+    : (raw.project && Array.isArray(raw.project.chapters) ? raw.project.chapters : []);
+
+  if (chaptersList.length > 0) {
+    for (let i = 0; i < chaptersList.length; i++) {
+      const ch = chaptersList[i];
       const chapId = ch.id ? `${ch.id}-${now}` : `cap-${now}-${i}`;
+      const contentHtml = markdownToEditorHtml(ch.content || '');
       await db.execute(
         `INSERT INTO documents (id, title, content, project_id) VALUES ($1, $2, $3, $4)`,
-        [chapId, ch.title || `Capitolo ${i + 1}`, ch.content || "", targetId]
+        [chapId, ch.title || `Capitolo ${i + 1}`, contentHtml, targetId]
       );
     }
   } else {
@@ -950,37 +1016,42 @@ export async function importaProgettoCompleto(
 
   // Inserisce nodi del Worldbuilding
   const nodeIdMap = new Map<string, string>();
-  if (manifest.worldbuilding?.nodes && Array.isArray(manifest.worldbuilding.nodes)) {
-    for (const node of manifest.worldbuilding.nodes) {
-      const newNodeId = `node-${now}-${node.id}`;
-      nodeIdMap.set(node.id, newNodeId);
-      await db.execute(
-        `INSERT INTO nodes (id, type, name, description, metadata, project_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          newNodeId,
-          node.type || "personaggio",
-          node.name || "Senza Nome",
-          node.description || "",
-          JSON.stringify(node.metadata || {}),
-          targetId,
-        ]
-      );
-    }
+  const nodesList = (raw.worldbuilding?.nodes && Array.isArray(raw.worldbuilding.nodes))
+    ? raw.worldbuilding.nodes
+    : (Array.isArray(raw.nodes) ? raw.nodes : []);
+
+  for (const node of nodesList) {
+    const oldId = node.id || `node-${Math.random()}`;
+    const newNodeId = `node-${now}-${oldId}`;
+    nodeIdMap.set(oldId, newNodeId);
+    await db.execute(
+      `INSERT INTO nodes (id, type, name, description, metadata, project_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        newNodeId,
+        node.type || node.node_type || 'personaggio',
+        node.name || 'Senza Nome',
+        node.description || '',
+        JSON.stringify(node.metadata || {}),
+        targetId,
+      ]
+    );
   }
 
   // Inserisce collegamenti
-  if (manifest.worldbuilding?.edges && Array.isArray(manifest.worldbuilding.edges)) {
-    for (const edge of manifest.worldbuilding.edges) {
-      const newSource = nodeIdMap.get(edge.source) || edge.source;
-      const newTarget = nodeIdMap.get(edge.target) || edge.target;
-      const newEdgeId = `edge-${now}-${edge.id}`;
-      await db.execute(
-        `INSERT INTO edges (id, source_id, target_id, label, project_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [newEdgeId, newSource, newTarget, edge.label || "", targetId]
-      );
-    }
+  const edgesList = (raw.worldbuilding?.edges && Array.isArray(raw.worldbuilding.edges))
+    ? raw.worldbuilding.edges
+    : (Array.isArray(raw.edges) ? raw.edges : []);
+
+  for (const edge of edgesList) {
+    const newSource = nodeIdMap.get(edge.source) || edge.source;
+    const newTarget = nodeIdMap.get(edge.target) || edge.target;
+    const newEdgeId = `edge-${now}-${edge.id || Math.random()}`;
+    await db.execute(
+      `INSERT INTO edges (id, source_id, target_id, label, project_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [newEdgeId, newSource, newTarget, edge.label || '', targetId]
+    );
   }
 
   setActiveProjectId(targetId);
@@ -988,17 +1059,17 @@ export async function importaProgettoCompleto(
   return {
     id: targetId,
     title: targetTitle,
-    genre: pData.genre || "",
-    description: pData.description || "",
-    styleTone: pData.styleTone || "",
-    narrativeVoice: pData.narrativeVoice || "",
-    targetAudience: pData.targetAudience || "",
-    narrativeNotes: pData.narrativeNotes || "",
-    exportFolder: pData.exportFolder || null,
-    autoExportMinutes: pData.autoExportMinutes || 0,
+    genre,
+    description,
+    styleTone,
+    narrativeVoice,
+    targetAudience,
+    narrativeNotes,
+    exportFolder,
+    autoExportMinutes,
     lastExportedAt: now,
-    createdAt: pData.createdAt || now,
+    createdAt,
     updatedAt: now,
-    chaptersCount: manifest.chapters?.length || 1,
+    chaptersCount: chaptersList.length > 0 ? chaptersList.length : 1,
   };
 }

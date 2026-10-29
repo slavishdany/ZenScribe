@@ -123,34 +123,188 @@ pub async fn pick_manifest_file_dialog() -> Option<String> {
     file.map(|f| f.path().to_string_lossy().to_string())
 }
 
-/// Legge il contenuto del manifest JSON da un percorso specificato (file o cartella di progetto)
+/// Legge il contenuto del manifest JSON da un percorso specificato (file o cartella di progetto).
+/// Se viene selezionata una cartella senza manifest esplicito, o il file zenscribe.project.json,
+/// ricostruisce al volo il manifest completo leggendo i file .md della cartella Capitoli e Bibbia.
 pub fn read_manifest_from_path(path_str: &str) -> Result<String, String> {
     let p = Path::new(path_str);
     if !p.exists() {
         return Err(format!("Il percorso '{}' non esiste sul disco.", path_str));
     }
 
-    let manifest_path = if p.is_dir() {
+    let (dir_path, explicit_manifest_path) = if p.is_dir() {
         let candidate_manifest = p.join("zenscribe.manifest.json");
         if candidate_manifest.exists() {
-            candidate_manifest
+            (p.to_path_buf(), Some(candidate_manifest))
         } else {
-            let candidate_project = p.join("zenscribe.project.json");
-            if candidate_project.exists() {
-                candidate_project
-            } else {
-                return Err(format!(
-                    "Nessun indice 'zenscribe.manifest.json' o 'zenscribe.project.json' trovato nella cartella '{}'.",
-                    path_str
-                ));
-            }
+            (p.to_path_buf(), None)
         }
     } else {
-        p.to_path_buf()
+        let parent = p.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        let file_name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if file_name == "zenscribe.manifest.json" {
+            (parent, Some(p.to_path_buf()))
+        } else {
+            // Se l'utente ha selezionato zenscribe.project.json o un altro file nella cartella di progetto,
+            // controlliamo se nella cartella genitore esiste un zenscribe.manifest.json
+            let candidate_manifest = parent.join("zenscribe.manifest.json");
+            if candidate_manifest.exists() {
+                (parent, Some(candidate_manifest))
+            } else {
+                (parent, None)
+            }
+        }
     };
 
-    fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("Impossibile leggere il file manifest: {}", e))
+    // 1. Se esiste un zenscribe.manifest.json valido, proviamo a leggerlo
+    if let Some(ref m_path) = explicit_manifest_path {
+        if let Ok(content) = fs::read_to_string(m_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if val.get("project").is_some() || val.get("chapters").is_some() {
+                    return Ok(content);
+                }
+            }
+        }
+    }
+
+    // 2. Se abbiamo un file json selezionato direttamente (non cartella) e non c'è manifest esplicito,
+    // controlliamo se il file stesso contiene già JSON valido con capitoli
+    if !p.is_dir() {
+        if let Ok(content) = fs::read_to_string(p) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if val.get("chapters").and_then(|c| c.as_array()).map_or(false, |arr| !arr.is_empty()) {
+                    return Ok(content);
+                }
+            }
+        }
+    }
+
+    // 3. Altrimenti, ricostruiamo il manifest completo scansionando la cartella:
+    let default_title = dir_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Progetto Importato")
+        .to_string();
+
+    let mut project_meta = serde_json::json!({
+        "title": default_title,
+        "genre": "",
+        "description": "",
+        "style_tone": "",
+        "narrative_voice": "",
+        "target_audience": "",
+        "narrative_notes": ""
+    });
+
+    let project_json_path = if !p.is_dir() && p.extension().and_then(|e| e.to_str()) == Some("json") {
+        p.to_path_buf()
+    } else {
+        dir_path.join("zenscribe.project.json")
+    };
+
+    if project_json_path.exists() {
+        if let Ok(content) = fs::read_to_string(&project_json_path) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(obj) = parsed.as_object() {
+                    for (k, v) in obj {
+                        project_meta[k] = v.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    // Leggiamo i capitoli dalla sottocartella "Capitoli" o direttamente da dir_path se contiene file .md
+    let chapters_dir = {
+        let sub = dir_path.join("Capitoli");
+        if sub.exists() && sub.is_dir() {
+            sub
+        } else {
+            dir_path.clone()
+        }
+    };
+
+    let mut chapters = Vec::new();
+    if let Ok(entries) = fs::read_dir(&chapters_dir) {
+        let mut md_files: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|path| path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+            .filter(|path| {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                name != "README.md"
+            })
+            .collect();
+
+        md_files.sort();
+
+        for (idx, file_path) in md_files.iter().enumerate() {
+            if let Ok(text) = fs::read_to_string(file_path) {
+                let fallback_title = file_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Capitolo")
+                    .to_string();
+
+                let mut chapter_title = fallback_title;
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("# ") {
+                        chapter_title = trimmed[2..].trim().to_string();
+                        break;
+                    }
+                }
+
+                chapters.push(serde_json::json!({
+                    "id": format!("cap-import-{}", idx + 1),
+                    "title": chapter_title,
+                    "content": text
+                }));
+            }
+        }
+    }
+
+    // Leggiamo la Bibbia dalla cartella "Bibbia" se presente
+    let bible_dir = dir_path.join("Bibbia");
+    let mut nodes = Vec::new();
+    if bible_dir.exists() && bible_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&bible_dir) {
+            for (idx, entry) in entries.filter_map(|e| e.ok()).enumerate() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                    if let Ok(text) = fs::read_to_string(&path) {
+                        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Entità");
+                        nodes.push(serde_json::json!({
+                            "id": format!("node-import-{}", idx + 1),
+                            "name": name,
+                            "type": "personaggio",
+                            "description": text,
+                            "metadata": {}
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
+    let manifest = serde_json::json!({
+        "appVersion": "1.1.0",
+        "exportDate": now_ts.to_string(),
+        "project": project_meta,
+        "chapters": chapters,
+        "worldbuilding": {
+            "nodes": nodes,
+            "edges": []
+        }
+    });
+
+    serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("Errore serializzazione manifest ricostruito: {}", e))
 }
 
 /// Apre la finestra di dialogo nativa "Salva con nome" per esportare un file

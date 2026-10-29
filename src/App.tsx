@@ -169,7 +169,11 @@ export const App: React.FC = () => {
         const chList = await elencaCapitoli(proj.id);
         if (chList && chList.length > 0) {
           setChapters(chList);
-          setActiveChapterId((prev) => (chList.some((c) => c.id === prev) ? prev : chList[0].id));
+          if (targetId) {
+            setActiveChapterId(chList[0].id);
+          } else {
+            setActiveChapterId((prev) => (chList.some((c) => c.id === prev) ? prev : chList[0].id));
+          }
         } else {
           const initialChapters = [
             {
