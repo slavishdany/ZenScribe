@@ -12,9 +12,9 @@ use crate::model_manager::{
     LocalModelInfo, PresetModel,
 };
 use crate::project_io::{
-    html_to_markdown, open_folder_in_system_explorer, pick_folder_dialog, sanitize_filename,
-    save_file_dialog, write_full_project_to_directory, ChapterExportDto, ProjectProfileDto,
-    WorldNodeExportDto,
+    html_to_markdown, open_folder_in_system_explorer, pick_folder_dialog, pick_manifest_file_dialog,
+    read_manifest_from_path, sanitize_filename, save_file_dialog, write_full_project_to_directory,
+    ChapterExportDto, ProjectProfileDto, WorldNodeExportDto,
 };
 
 pub struct AppAiState {
@@ -319,15 +319,28 @@ async fn export_full_manuscript(
     }
 }
 
-/// Sincronizza l'intero progetto su una cartella fisica strutturata
+/// Sincronizza l'intero progetto su una cartella fisica strutturata con indice manifest
 #[tauri::command]
 fn sync_project_to_folder(
     folder_path: String,
+    manifest_json: String,
     project: ProjectProfileDto,
     chapters: Vec<ChapterExportDto>,
     nodes: Vec<WorldNodeExportDto>,
 ) -> Result<String, String> {
-    write_full_project_to_directory(&folder_path, project, chapters, nodes)
+    write_full_project_to_directory(&folder_path, &manifest_json, project, chapters, nodes)
+}
+
+/// Apre la finestra di dialogo nativa per selezionare un file manifest (.json)
+#[tauri::command]
+async fn select_manifest_file() -> Result<Option<String>, String> {
+    Ok(pick_manifest_file_dialog().await)
+}
+
+/// Legge il contenuto JSON di un indice manifest da un file o da una cartella
+#[tauri::command]
+fn read_manifest_file(path: String) -> Result<String, String> {
+    read_manifest_from_path(&path)
 }
 
 // ============================================================================
@@ -376,6 +389,8 @@ pub fn run() {
             correct_spelling_local,
             rephrase_text_local,
             select_project_folder,
+            select_manifest_file,
+            read_manifest_file,
             open_folder_in_explorer,
             export_chapter_file,
             export_full_manuscript,

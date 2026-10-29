@@ -62,6 +62,57 @@ export interface ProjectProfile {
   narrativeNotes: string;
 }
 
+export interface ProjectItem extends ProjectProfile {
+  id: string;
+  exportFolder?: string | null;
+  autoExportMinutes: number; // 0 = disattivata, 5, 10, 15, 30, 60
+  lastExportedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+  chaptersCount?: number;
+}
+
+export interface ProjectManifest {
+  version: string;
+  appName: string;
+  exportDate: string;
+  project: {
+    id: string;
+    title: string;
+    genre: string;
+    description: string;
+    styleTone: string;
+    narrativeVoice: string;
+    targetAudience: string;
+    narrativeNotes: string;
+    exportFolder?: string | null;
+    autoExportMinutes?: number;
+    createdAt?: number;
+    updatedAt?: number;
+  };
+  chapters: Array<{
+    id: string;
+    title: string;
+    content: string; // TipTap HTML
+    order?: number;
+  }>;
+  worldbuilding: {
+    nodes: Array<{
+      id: string;
+      type: string;
+      name: string;
+      description: string;
+      metadata?: Record<string, unknown>;
+    }>;
+    edges: Array<{
+      id: string;
+      source: string;
+      target: string;
+      label: string;
+    }>;
+  };
+}
+
 export interface EditorSettings {
   font: EditorFont;
   fontSize: number; // in px

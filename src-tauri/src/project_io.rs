@@ -105,11 +105,52 @@ pub fn sanitize_filename(name: &str) -> String {
 /// Apre la finestra di dialogo nativa per selezionare una cartella sul computer
 pub async fn pick_folder_dialog() -> Option<String> {
     let folder = rfd::AsyncFileDialog::new()
-        .set_title("Seleziona la cartella per il Progetto ZenScribe")
+        .set_title("Seleziona la cartella per l'esportazione / backup del Progetto ZenScribe")
         .pick_folder()
         .await;
 
     folder.map(|f| f.path().to_string_lossy().to_string())
+}
+
+/// Apre la finestra di dialogo nativa per selezionare un file manifest (.json)
+pub async fn pick_manifest_file_dialog() -> Option<String> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_title("Seleziona il file indice di backup ZenScribe (zenscribe.manifest.json)")
+        .add_filter("ZenScribe Manifest", &["json"])
+        .pick_file()
+        .await;
+
+    file.map(|f| f.path().to_string_lossy().to_string())
+}
+
+/// Legge il contenuto del manifest JSON da un percorso specificato (file o cartella di progetto)
+pub fn read_manifest_from_path(path_str: &str) -> Result<String, String> {
+    let p = Path::new(path_str);
+    if !p.exists() {
+        return Err(format!("Il percorso '{}' non esiste sul disco.", path_str));
+    }
+
+    let manifest_path = if p.is_dir() {
+        let candidate_manifest = p.join("zenscribe.manifest.json");
+        if candidate_manifest.exists() {
+            candidate_manifest
+        } else {
+            let candidate_project = p.join("zenscribe.project.json");
+            if candidate_project.exists() {
+                candidate_project
+            } else {
+                return Err(format!(
+                    "Nessun indice 'zenscribe.manifest.json' o 'zenscribe.project.json' trovato nella cartella '{}'.",
+                    path_str
+                ));
+            }
+        }
+    } else {
+        p.to_path_buf()
+    };
+
+    fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("Impossibile leggere il file manifest: {}", e))
 }
 
 /// Apre la finestra di dialogo nativa "Salva con nome" per esportare un file
@@ -158,9 +199,10 @@ pub fn open_folder_in_system_explorer(folder_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Salva e sincronizza l'intero progetto su una struttura fisica di cartelle su disco
+/// Salva e sincronizza l'intero progetto su una struttura fisica di cartelle su disco con indice manifest
 pub fn write_full_project_to_directory(
     folder_path: &str,
+    manifest_json: &str,
     project: ProjectProfileDto,
     chapters: Vec<ChapterExportDto>,
     nodes: Vec<WorldNodeExportDto>,
@@ -179,14 +221,18 @@ pub fn write_full_project_to_directory(
     fs::create_dir_all(&bible_dir).map_err(|e| e.to_string())?;
     fs::create_dir_all(&exports_dir).map_err(|e| e.to_string())?;
 
-    // 1. Salva metadati zenscribe.project.json
+    // 1. Salva l'indice completo zenscribe.manifest.json per reimportazione al 100%
+    let manifest_path = root.join("zenscribe.manifest.json");
+    fs::write(&manifest_path, manifest_json)
+        .map_err(|e| format!("Errore salvataggio zenscribe.manifest.json: {}", e))?;
+
+    // 2. Salva metadati rapidi zenscribe.project.json
     let project_json_path = root.join("zenscribe.project.json");
     let json_content = serde_json::to_string_pretty(&project)
         .map_err(|e| format!("Errore serializzazione progetto: {}", e))?;
-    fs::write(&project_json_path, json_content)
-        .map_err(|e| format!("Errore salvataggio zenscribe.project.json: {}", e))?;
+    let _ = fs::write(&project_json_path, json_content);
 
-    // 2. Crea README.md del libro per visualizzazione immediata
+    // 3. Crea README.md del libro per visualizzazione immediata
     let mut readme_content = String::new();
     readme_content.push_str(&format!("# 📖 {}\n\n", if project.title.is_empty() { "Nuovo Romanzo" } else { &project.title }));
     if !project.genre.is_empty() {

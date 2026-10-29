@@ -33,6 +33,8 @@ interface EditorToolbarProps {
   onToggleChapters?: () => void;
   onOpenWorldbuilding?: () => void;
   onOpenProjectProfile?: () => void;
+  onOpenProjectsManager?: (tab?: 'library' | 'create' | 'profile' | 'import') => void;
+  onExportSnapshot?: () => void;
   onExportChapter?: (format: 'md' | 'txt') => void;
   onExportManuscript?: (format: 'md' | 'txt') => void;
 }
@@ -51,6 +53,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   onToggleChapters,
   onOpenWorldbuilding,
   onOpenProjectProfile,
+  onOpenProjectsManager,
+  onExportSnapshot,
   onExportChapter,
   onExportManuscript,
 }) => {
@@ -88,15 +92,21 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           </button>
         )}
 
-        {onOpenProjectProfile && (
+        {(onOpenProjectsManager || onOpenProjectProfile) && (
           <button
-            onClick={onOpenProjectProfile}
-            className="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-700 dark:text-stone-300 flex items-center space-x-1 text-xs font-medium max-w-[160px] truncate"
-            title="Profilo del Romanzo & Stile Narrativo per le AI"
+            onClick={() => {
+              if (onOpenProjectsManager) {
+                onOpenProjectsManager('library');
+              } else if (onOpenProjectProfile) {
+                onOpenProjectProfile();
+              }
+            }}
+            className="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-700 dark:text-stone-300 flex items-center space-x-1 text-xs font-medium max-w-[190px] truncate"
+            title="Gestione Progetti Letterari & Profilo Narrativo"
           >
             <BookMarked className="w-4 h-4 text-amber-500 flex-shrink-0" />
             <span className="truncate hidden sm:inline">
-              {projectTitle ? projectTitle : 'Profilo Romanzo'}
+              {projectTitle ? projectTitle : 'I Miei Romanzi'}
             </span>
           </button>
         )}
@@ -242,18 +252,35 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         </select>
 
         {/* Menu Esporta su File */}
-        {(onExportChapter || onExportManuscript) && (
+        {(onExportChapter || onExportManuscript || onExportSnapshot) && (
           <div className="relative">
             <button
               onClick={() => setIsExportOpen(!isExportOpen)}
               className="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400"
-              title="Esporta su File (.md / .txt)"
+              title="Esporta su File (.md / .txt / Snapshot con Indice)"
             >
               <Download className="w-4 h-4" />
             </button>
 
             {isExportOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-56 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl shadow-xl overflow-hidden py-1 z-50 text-xs">
+              <div className="absolute right-0 top-full mt-1.5 w-60 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl shadow-xl overflow-hidden py-1 z-50 text-xs">
+                {onExportSnapshot && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setIsExportOpen(false);
+                        onExportSnapshot();
+                      }}
+                      className="w-full text-left px-3 py-2 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-stone-800 dark:text-stone-200 flex items-center justify-between font-semibold"
+                    >
+                      <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+                        📦 Esporta Backup con Indice
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-600">Snapshot</span>
+                    </button>
+                    <div className="h-px bg-stone-100 dark:bg-stone-800 my-1" />
+                  </>
+                )}
                 {onExportChapter && (
                   <>
                     <button

@@ -11,8 +11,11 @@ import {
   FolderSync,
   BookMarked,
   Download,
+  FolderArchive,
+  Clock,
+  ExternalLink,
 } from 'lucide-react';
-import { ProjectProfile } from '../types';
+import { ProjectProfile, ProjectItem } from '../types';
 
 export interface ChapterItem {
   id: string;
@@ -25,6 +28,7 @@ interface ChapterSidebarProps {
   chapters: ChapterItem[];
   activeChapterId: string;
   projectProfile: ProjectProfile;
+  activeProject?: ProjectItem | null;
   projectFolder: string | null;
   onSelectChapter: (id: string) => void;
   onCreateChapter: () => void;
@@ -32,8 +36,10 @@ interface ChapterSidebarProps {
   onRenameChapter: (id: string, newTitle: string) => void;
   onClose: () => void;
   onOpenProjectProfile: () => void;
+  onOpenProjectsManager?: (tab?: 'library' | 'create' | 'profile' | 'import') => void;
   onSelectProjectFolder: () => void;
   onSyncProjectFolder: () => void;
+  onExportSnapshot?: () => void;
   onOpenFolderInExplorer: () => void;
   onExportManuscript: (format: 'md' | 'txt') => void;
 }
@@ -43,6 +49,7 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
   chapters,
   activeChapterId,
   projectProfile,
+  activeProject,
   projectFolder,
   onSelectChapter,
   onCreateChapter,
@@ -50,8 +57,10 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
   onRenameChapter,
   onClose,
   onOpenProjectProfile,
+  onOpenProjectsManager,
   onSelectProjectFolder,
   onSyncProjectFolder,
+  onExportSnapshot,
   onOpenFolderInExplorer,
   onExportManuscript,
 }) => {
@@ -89,47 +98,91 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
       {/* Intestazione */}
       <div className="p-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between bg-stone-50/60 dark:bg-stone-950/40">
         <div className="flex items-center space-x-2 text-stone-800 dark:text-stone-200 font-semibold text-sm">
-          <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-          <span>Struttura Progetto</span>
+          <BookOpen className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+          <span>Capitoli & Progetto</span>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 rounded text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800"
-          title="Chiudi pannello"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {onOpenProjectsManager && (
+            <button
+              onClick={() => onOpenProjectsManager('library')}
+              className="p-1 rounded text-stone-500 hover:text-amber-600 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors"
+              title="Gestione Multi-Progetto"
+            >
+              <FolderArchive className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800"
+            title="Chiudi pannello"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Profilo del Romanzo & Cartella su Disco */}
       <div className="p-3 border-b border-stone-200 dark:border-stone-800 space-y-2 bg-stone-50/30 dark:bg-stone-950/20 text-xs">
         {/* Card Profilo Progetto */}
-        <div
-          onClick={onOpenProjectProfile}
-          className="p-2.5 rounded-xl border border-stone-200 dark:border-stone-800 hover:border-indigo-400 dark:hover:border-indigo-600 bg-white dark:bg-stone-900 cursor-pointer transition-all shadow-sm group"
-        >
-          <div className="flex items-center justify-between mb-1">
-            <span className="font-semibold text-stone-900 dark:text-stone-100 flex items-center space-x-1.5 truncate">
-              <BookMarked className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
-              <span className="truncate">{projectProfile.title || 'Nuovo Progetto (Senza Titolo)'}</span>
-            </span>
-            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
-              Modifica
-            </span>
+        <div className="p-2.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 shadow-sm space-y-2">
+          <div className="flex items-start justify-between gap-1">
+            <div
+              onClick={() => onOpenProjectsManager ? onOpenProjectsManager('profile') : onOpenProjectProfile()}
+              className="cursor-pointer truncate flex-1"
+            >
+              <div className="font-semibold text-stone-900 dark:text-stone-100 flex items-center space-x-1.5 truncate">
+                <BookMarked className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                <span className="truncate">{projectProfile.title || 'Nuovo Romanzo'}</span>
+              </div>
+              <div className="flex items-center space-x-1.5 text-[10px] text-stone-500 mt-0.5">
+                <span className="text-amber-700 dark:text-amber-400 font-medium">
+                  {projectProfile.genre || 'Genere non impostato'}
+                </span>
+                {projectProfile.styleTone && (
+                  <>
+                    <span>•</span>
+                    <span className="truncate">{projectProfile.styleTone}</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {onOpenProjectsManager && (
+              <button
+                type="button"
+                onClick={() => onOpenProjectsManager('library')}
+                className="px-2 py-0.5 rounded bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 text-[10px] font-medium hover:bg-amber-100 dark:hover:bg-amber-950 hover:text-amber-700 transition-colors"
+                title="Cambia o crea progetti"
+              >
+                Progetti
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center space-x-1.5 text-[10px] text-stone-500">
-            <span>{projectProfile.genre || 'Genere non impostato'}</span>
-            {projectProfile.styleTone && (
-              <>
-                <span>•</span>
-                <span className="truncate">{projectProfile.styleTone}</span>
-              </>
-            )}
+          {/* Backup e Cartella su Disco */}
+          <div className="pt-2 border-t border-stone-100 dark:border-stone-800 flex items-center justify-between text-[10px] text-stone-500">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3 text-stone-400" />
+              {activeProject?.autoExportMinutes && activeProject.autoExportMinutes > 0
+                ? `Backup: ogni ${activeProject.autoExportMinutes}m`
+                : 'Backup: manuale'}
+            </span>
+            <div className="flex items-center gap-1">
+              {onExportSnapshot && (
+                <button
+                  type="button"
+                  onClick={onExportSnapshot}
+                  className="px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 font-medium flex items-center gap-0.5"
+                  title="Esporta Snapshot adesso con indice"
+                >
+                  <Download className="w-2.5 h-2.5" /> Snapshot
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Gestione Cartella su Disco */}
+        {/* Percorso Cartella */}
         <div className="p-2 rounded-lg border border-dashed border-stone-200 dark:border-stone-800 flex items-center justify-between text-[11px]">
           {projectFolder ? (
             <>
@@ -154,7 +207,7 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
                   className="p-1 rounded hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200"
                   title="Apri in Esplora File"
                 >
-                  <FolderOpen className="w-3.5 h-3.5" />
+                  <ExternalLink className="w-3.5 h-3.5" />
                 </button>
               </div>
             </>
@@ -162,10 +215,10 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
             <button
               type="button"
               onClick={onSelectProjectFolder}
-              className="w-full text-left text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1.5 font-medium"
+              className="w-full text-left text-amber-700 dark:text-amber-400 hover:underline flex items-center space-x-1.5 font-medium"
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>Collega cartella su disco...</span>
+              <span>Collega cartella di backup su disco...</span>
             </button>
           )}
         </div>

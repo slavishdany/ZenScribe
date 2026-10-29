@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Editor } from '@tiptap/react';
 import { EditorToolbar } from './components/EditorToolbar';
 import { ZenEditor } from './components/ZenEditor';
@@ -7,7 +7,7 @@ import { AIPanel } from './components/AIPanel';
 import { SettingsModal, DEFAULT_CLOUD_SETTINGS } from './components/SettingsModal';
 import { ChapterSidebar, ChapterItem } from './components/ChapterSidebar';
 import { WorldbuildingModal } from './components/WorldbuildingModal';
-import { ProjectProfileModal } from './components/ProjectProfileModal';
+import { ProjectsManagerModal } from './components/ProjectsManagerModal';
 import {
   EditorSettings,
   ServerStatusInfo,
@@ -15,6 +15,7 @@ import {
   EditorWidth,
   LocalModelInfo,
   ProjectProfile,
+  ProjectItem,
 } from './types';
 import {
   checkLocalServerStatus,
@@ -28,15 +29,18 @@ import {
   eliminaCapitolo,
   rinominaCapitolo,
   salvaCapitolo,
-  caricaProfiloProgetto,
-  ottieniMappaConcettuale,
+  caricaProgetto,
+  elencaProgetti,
+  salvaProgetto,
+  getActiveProjectId,
+  setActiveProjectId,
+  esportaSnapshotProgetto,
 } from './services/db';
 import {
   selectProjectFolder,
   openFolderInExplorer,
   exportChapterToFile,
   exportFullManuscript,
-  syncProjectToFolder,
 } from './services/projectFiles';
 
 const DEFAULT_SETTINGS: EditorSettings = {
@@ -73,6 +77,10 @@ export const App: React.FC = () => {
   const [wordCount, setWordCount] = useState(0);
   const [characterCount, setCharacterCount] = useState(0);
 
+  // Progetto Attivo (Multi-progetto su SQLite)
+  const [activeProjectId, setActiveProjectIdState] = useState<string>(() => getActiveProjectId());
+  const [activeProject, setActiveProject] = useState<ProjectItem | null>(null);
+
   // Profilo Progetto (Stile narrativo, Genere, Premessa)
   const [projectProfile, setProjectProfile] = useState<ProjectProfile>({
     title: '',
@@ -84,19 +92,20 @@ export const App: React.FC = () => {
     narrativeNotes: '',
   });
 
-  // Cartella di sincronizzazione su disco (.md files)
-  const [projectFolder, setProjectFolder] = useState<string | null>(() => {
-    return localStorage.getItem('zenscribe_project_folder') || null;
-  });
+  // Cartella di esportazione / backup su disco del progetto
+  const [projectFolder, setProjectFolder] = useState<string | null>(null);
 
   // Capitoli & SQLite
   const [chapters, setChapters] = useState<ChapterItem[]>([]);
   const [activeChapterId, setActiveChapterId] = useState<string>('capitolo-principale');
   const [isChaptersOpen, setIsChaptersOpen] = useState(false);
   const [isWorldbuildingOpen, setIsWorldbuildingOpen] = useState(false);
-  const [isProjectProfileOpen, setIsProjectProfileOpen] = useState(false);
 
-  // Modelli Locali
+  // Modale Gestione Multi-Progetto
+  const [isProjectsManagerOpen, setIsProjectsManagerOpen] = useState(false);
+  const [projectsManagerTab, setProjectsManagerTab] = useState<'library' | 'create' | 'profile' | 'import'>('library');
+
+  // Modelli Locali GGUF
   const [availableModels, setAvailableModels] = useState<LocalModelInfo[]>([]);
   const [activeModelName, setActiveModelName] = useState<string | undefined>(undefined);
 
@@ -127,96 +136,165 @@ export const App: React.FC = () => {
     localStorage.setItem('zenscribe_settings', JSON.stringify(newSettings));
   };
 
-  // Caricamento profilo progetto da SQLite
-  const refreshProjectProfile = useCallback(async () => {
+  // Caricamento del progetto attivo e dei suoi capitoli da SQLite
+  const refreshProjectData = useCallback(async (targetId?: string) => {
     try {
-      const p = await caricaProfiloProgetto();
-      setProjectProfile(p);
+      const pid = targetId || getActiveProjectId();
+      let proj = await caricaProgetto(pid);
+      if (!proj) {
+        const all = await elencaProgetti();
+        if (all.length > 0) {
+          proj = all[0];
+          setActiveProjectId(proj.id);
+          setActiveProjectIdState(proj.id);
+        }
+      }
+
+      if (proj) {
+        setActiveProject(proj);
+        setActiveProjectIdState(proj.id);
+        setActiveProjectId(proj.id);
+        setProjectProfile({
+          title: proj.title,
+          genre: proj.genre,
+          description: proj.description,
+          styleTone: proj.styleTone,
+          narrativeVoice: proj.narrativeVoice,
+          targetAudience: proj.targetAudience,
+          narrativeNotes: proj.narrativeNotes,
+        });
+        setProjectFolder(proj.exportFolder || null);
+
+        // Carica i capitoli di questo progetto da SQLite
+        const chList = await elencaCapitoli(proj.id);
+        if (chList && chList.length > 0) {
+          setChapters(chList);
+          setActiveChapterId((prev) => (chList.some((c) => c.id === prev) ? prev : chList[0].id));
+        } else {
+          const initialChapters = [
+            {
+              id: `cap-${Date.now()}`,
+              title: 'Capitolo 1: Inizio',
+              content: '<h1>Capitolo 1: Inizio</h1><p></p>',
+            },
+          ];
+          setChapters(initialChapters);
+          setActiveChapterId(initialChapters[0].id);
+        }
+      }
     } catch (e) {
-      console.warn('[App] Errore lettura profilo progetto:', e);
+      console.warn('[App] Errore lettura dati progetto da SQLite:', e);
     }
   }, []);
 
   useEffect(() => {
-    refreshProjectProfile();
-  }, [refreshProjectProfile]);
+    refreshProjectData();
+  }, [refreshProjectData]);
 
-  // Sincronizzazione automatica cartella su disco
-  const triggerAutoSync = useCallback(
-    async (currentChapters?: ChapterItem[], currentProfile?: ProjectProfile) => {
-      if (!projectFolder) return;
-      try {
-        const chList = currentChapters || chapters;
-        const prof = currentProfile || projectProfile;
-        const map = await ottieniMappaConcettuale();
-        await syncProjectToFolder(projectFolder, prof, chList, map.nodes);
-        console.log('[AutoSync] Progetto sincronizzato su:', projectFolder);
-      } catch (e) {
-        console.warn('[AutoSync] Errore sincronizzazione su disco:', e);
-      }
-    },
-    [projectFolder, chapters, projectProfile]
-  );
-
-  // Caricamento capitoli da SQLite
-  const refreshChapters = useCallback(async () => {
-    try {
-      const list = await elencaCapitoli();
-      if (list && list.length > 0) {
-        setChapters(list);
-        setActiveChapterId((prev) => (list.some((c) => c.id === prev) ? prev : list[0].id));
-      } else {
-        const initialChapters = [
-          {
-            id: 'capitolo-principale',
-            title: 'Capitolo 1: La Chiarezza',
-            content: '',
-          },
-        ];
-        setChapters(initialChapters);
-      }
-    } catch (e) {
-      console.warn('[DB] Errore lettura capitoli:', e);
-    }
-  }, []);
-
+  // Auto-esportazione periodica di sicurezza (se configurata per il progetto)
   useEffect(() => {
-    refreshChapters();
-  }, [refreshChapters]);
+    if (
+      !activeProject ||
+      !activeProject.exportFolder ||
+      !activeProject.autoExportMinutes ||
+      activeProject.autoExportMinutes <= 0
+    ) {
+      return;
+    }
 
+    const intervalMs = activeProject.autoExportMinutes * 60 * 1000;
+    const timer = setInterval(async () => {
+      const timeSince = Date.now() - (activeProject.lastExportedAt || 0);
+      if (timeSince >= intervalMs) {
+        try {
+          console.log(
+            `[AutoExport] Avvio snapshot periodico per "${activeProject.title}" ogni ${activeProject.autoExportMinutes} min...`
+          );
+          const res = await esportaSnapshotProgetto(activeProject.id, activeProject.exportFolder!);
+          setActiveProject((prev) => (prev ? { ...prev, lastExportedAt: res.exportedAt } : null));
+          console.log('[AutoExport] Snapshot periodico salvato con successo in:', res.folderPath);
+        } catch (err) {
+          console.warn('[AutoExport] Errore snapshot periodico:', err);
+        }
+      }
+    }, 30000); // Controllo cadenzato ogni 30s
+
+    return () => clearInterval(timer);
+  }, [activeProject]);
+
+  // Esportazione snapshot con indice su richiesta ("con un tasto")
+  const handleExportSnapshot = async () => {
+    if (!activeProject) return;
+    try {
+      let targetFolder = activeProject.exportFolder;
+      if (!targetFolder) {
+        const picked = await selectProjectFolder();
+        if (!picked) return;
+        targetFolder = picked;
+        const updated = { ...activeProject, exportFolder: picked };
+        await salvaProgetto(updated);
+        setActiveProject(updated);
+        setProjectFolder(picked);
+      }
+
+      const res = await esportaSnapshotProgetto(activeProject.id, targetFolder);
+      setActiveProject((prev) => (prev ? { ...prev, lastExportedAt: res.exportedAt } : null));
+      alert(
+        `✅ Snapshot del progetto salvato con successo!\n\nCartella: ${res.folderPath}\nIndice: zenscribe.manifest.json\n\nTutti i capitoli (.md), la Bibbia e il manoscritto completo sono aggiornati.`
+      );
+    } catch (e: any) {
+      alert(`Errore esportazione snapshot: ${e.message || e}`);
+    }
+  };
+
+  // Cambio progetto attivo
+  const handleSwitchProject = async (newProjId: string) => {
+    await refreshProjectData(newProjId);
+  };
+
+  // Apertura modale Gestione Progetti
+  const handleOpenProjectsManager = (tab: 'library' | 'create' | 'profile' | 'import' = 'library') => {
+    setProjectsManagerTab(tab);
+    setIsProjectsManagerOpen(true);
+  };
+
+  // Creazione capitolo
   const handleCreateChapter = async () => {
     try {
-      const newId = await creaNuovoCapitolo(`Capitolo ${chapters.length + 1}`);
-      await refreshChapters();
+      const newId = await creaNuovoCapitolo(`Capitolo ${chapters.length + 1}`, activeProjectId);
+      await refreshProjectData(activeProjectId);
       setActiveChapterId(newId);
     } catch (e) {
       console.error('[DB] Errore creazione capitolo:', e);
     }
   };
 
+  // Eliminazione capitolo
   const handleDeleteChapter = async (id: string) => {
     try {
       await eliminaCapitolo(id);
-      await refreshChapters();
+      await refreshProjectData(activeProjectId);
     } catch (e) {
       console.error('[DB] Errore eliminazione capitolo:', e);
     }
   };
 
+  // Rinomina capitolo
   const handleRenameChapter = async (id: string, newTitle: string) => {
     try {
       await rinominaCapitolo(id, newTitle);
-      await refreshChapters();
+      await refreshProjectData(activeProjectId);
     } catch (e) {
       console.error('[DB] Errore rinomina capitolo:', e);
     }
   };
 
+  // Creazione capitolo dalla trama AI
   const handleCreateChapterFromPlot = async (title: string, content: string) => {
     try {
       const id = `capitolo-trama-${Date.now()}`;
-      await salvaCapitolo(id, title, content);
-      await refreshChapters();
+      await salvaCapitolo(id, title, content, activeProjectId);
+      await refreshProjectData(activeProjectId);
       setActiveChapterId(id);
       setIsWorldbuildingOpen(false);
     } catch (e) {
@@ -293,23 +371,16 @@ export const App: React.FC = () => {
     editorInstance.chain().focus().insertContent(`\n\n${newText}`).run();
   };
 
-  // Operazioni su File e Cartella di Progetto
+  // Seleziona cartella di backup su disco
   const handleSelectProjectFolder = async () => {
     const selected = await selectProjectFolder();
-    if (selected) {
+    if (selected && activeProject) {
       setProjectFolder(selected);
-      localStorage.setItem('zenscribe_project_folder', selected);
-      triggerAutoSync(chapters, projectProfile);
+      const updated = { ...activeProject, exportFolder: selected };
+      await salvaProgetto(updated);
+      setActiveProject(updated);
+      await esportaSnapshotProgetto(activeProject.id, selected);
     }
-  };
-
-  const handleSyncProjectFolder = async () => {
-    if (!projectFolder) {
-      handleSelectProjectFolder();
-      return;
-    }
-    await triggerAutoSync(chapters, projectProfile);
-    alert(`Progetto '${projectProfile.title || 'ZenScribe'}' sincronizzato con successo in:\n${projectFolder}`);
   };
 
   const handleOpenFolderInExplorer = async () => {
@@ -356,7 +427,9 @@ export const App: React.FC = () => {
         }
         onToggleChapters={() => setIsChaptersOpen(!isChaptersOpen)}
         onOpenWorldbuilding={() => setIsWorldbuildingOpen(true)}
-        onOpenProjectProfile={() => setIsProjectProfileOpen(true)}
+        onOpenProjectsManager={handleOpenProjectsManager}
+        onOpenProjectProfile={() => handleOpenProjectsManager('profile')}
+        onExportSnapshot={handleExportSnapshot}
         onExportChapter={handleExportChapter}
         onExportManuscript={handleExportManuscript}
         onOpenAIPanel={() => {
@@ -370,12 +443,13 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Barra Laterale Capitoli (SQLite + File Sync) */}
+      {/* Barra Laterale Capitoli & Progetto (SQLite Single Source of Truth) */}
       <ChapterSidebar
         isOpen={isChaptersOpen}
         chapters={chapters}
         activeChapterId={activeChapterId}
         projectProfile={projectProfile}
+        activeProject={activeProject}
         projectFolder={projectFolder}
         onSelectChapter={(id) => {
           setActiveChapterId(id);
@@ -387,15 +461,20 @@ export const App: React.FC = () => {
         onClose={() => setIsChaptersOpen(false)}
         onOpenProjectProfile={() => {
           setIsChaptersOpen(false);
-          setIsProjectProfileOpen(true);
+          handleOpenProjectsManager('profile');
+        }}
+        onOpenProjectsManager={(tab) => {
+          setIsChaptersOpen(false);
+          handleOpenProjectsManager(tab);
         }}
         onSelectProjectFolder={handleSelectProjectFolder}
-        onSyncProjectFolder={handleSyncProjectFolder}
+        onSyncProjectFolder={handleExportSnapshot}
+        onExportSnapshot={handleExportSnapshot}
         onOpenFolderInExplorer={handleOpenFolderInExplorer}
         onExportManuscript={handleExportManuscript}
       />
 
-      {/* Editor Centrale */}
+      {/* Editor Centrale: salvataggio istantaneo su SQLite ad ogni battitura */}
       <ZenEditor
         activeChapterId={activeChapterId}
         font={settings.font}
@@ -410,8 +489,10 @@ export const App: React.FC = () => {
         onEditorReady={(editor) => setEditorInstance(editor)}
         onOpenAIWithSelection={handleOpenAIWithSelection}
         onChapterSaved={() => {
-          refreshChapters();
-          triggerAutoSync();
+          // Quando un capitolo viene salvato su SQLite, aggiorna il contatore nella lista
+          elencaCapitoli(activeProjectId).then((list) => {
+            if (list) setChapters(list);
+          });
         }}
       />
 
@@ -451,7 +532,7 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Modal Bibbia del Romanzo (Personaggi & Luoghi) */}
+      {/* Modal Bibbia del Romanzo (Personaggi & Luoghi per Progetto) */}
       <WorldbuildingModal
         isOpen={isWorldbuildingOpen}
         geminiApiKey={settings.geminiApiKey}
@@ -464,13 +545,14 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Modal Profilo Progetto & Stile Narrativo */}
-      <ProjectProfileModal
-        isOpen={isProjectProfileOpen}
-        onClose={() => setIsProjectProfileOpen(false)}
+      {/* Modal Gestione Multi-Progetto, Libreria, Profilazione & Reimportazione */}
+      <ProjectsManagerModal
+        isOpen={isProjectsManagerOpen}
+        initialTab={projectsManagerTab}
+        onClose={() => setIsProjectsManagerOpen(false)}
+        onProjectChanged={handleSwitchProject}
         onProjectUpdated={(newProfile) => {
           setProjectProfile(newProfile);
-          triggerAutoSync(chapters, newProfile);
         }}
       />
 

@@ -65,10 +65,31 @@ export async function exportFullManuscript(
 }
 
 /**
- * Sincronizza l'intero progetto su una cartella fisica strutturata con Capitoli/, Bibbia/ e Manoscritto/
+ * Apre la finestra di dialogo nativa del sistema operativo per selezionare un file manifest JSON (.json)
+ */
+export async function selectManifestFile(): Promise<string | null> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string | null>("select_manifest_file");
+  }
+  return null;
+}
+
+/**
+ * Legge il contenuto del manifest da un file o da una cartella di progetto
+ */
+export async function readManifestFile(path: string): Promise<string> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string>("read_manifest_file", { path });
+  }
+  throw new Error("La lettura del manifest richiede l'ambiente Tauri.");
+}
+
+/**
+ * Sincronizza ed esporta l'intero progetto su una cartella fisica con indice zenscribe.manifest.json, Capitoli/, Bibbia/ e Manoscritto/
  */
 export async function syncProjectToFolder(
   folderPath: string,
+  manifestJson: string,
   project: ProjectProfile,
   chapters: ChapterItem[],
   nodes: GraphNode[]
@@ -99,6 +120,7 @@ export async function syncProjectToFolder(
 
     return await invoke<string>("sync_project_to_folder", {
       folderPath,
+      manifestJson,
       project: projectDto,
       chapters: chaptersDto,
       nodes: nodesDto,
