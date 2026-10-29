@@ -39,7 +39,7 @@ import {
 export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
   activeProvider: 'gemini',
   providers: {
-    gemini: { apiKey: '', model: 'gemini-2.5-flash' },
+    gemini: { apiKey: '', model: 'gemini-1.5-flash' },
     openai: { apiKey: '', model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' },
     anthropic: { apiKey: '', model: 'claude-3-5-haiku-20241022', baseUrl: 'https://api.anthropic.com/v1' },
     openrouter: { apiKey: '', model: 'deepseek/deepseek-chat', baseUrl: 'https://openrouter.ai/api/v1' },
@@ -75,11 +75,11 @@ const PROVIDER_METADATA: Record<
 > = {
   gemini: {
     name: 'Google Gemini',
-    description: 'Modelli ultra-veloci ed economici di Google AI Studio (Gemini 2.5 Flash)',
+    description: 'Modelli ultra-veloci ed economici di Google AI Studio (Gemini 1.5 / 2.0 Flash)',
     badge: 'Consigliato',
     keyUrl: 'https://aistudio.google.com/app/apikey',
     keyPlaceholder: 'AIzaSy...',
-    models: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    models: ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'],
   },
   openai: {
     name: 'OpenAI',

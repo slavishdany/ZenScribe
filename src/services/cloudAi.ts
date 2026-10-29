@@ -31,7 +31,11 @@ export async function generateWithCloudProvider(
   switch (providerType) {
     case "gemini": {
       const genAI = new GoogleGenerativeAI(config.apiKey);
-      const modelName = config.model || "gemini-2.5-flash";
+      let modelName = config.model || "gemini-1.5-flash";
+      if (modelName.includes("2.5")) {
+        modelName = "gemini-1.5-flash";
+      }
+
       const model = genAI.getGenerativeModel({
         model: modelName,
         systemInstruction,
@@ -41,7 +45,7 @@ export async function generateWithCloudProvider(
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: options.temperature ?? 0.7,
-          maxOutputTokens: options.maxTokens ?? 2048,
+          maxOutputTokens: options.maxTokens ?? 8192,
         },
       });
 
@@ -92,7 +96,7 @@ export async function generateWithCloudProvider(
             { role: "user", content: prompt },
           ],
           temperature: options.temperature ?? 0.7,
-          max_tokens: options.maxTokens ?? 2048,
+          max_tokens: options.maxTokens ?? 4096,
         }),
       });
 
@@ -127,7 +131,7 @@ export async function generateWithCloudProvider(
         },
         body: JSON.stringify({
           model: config.model || "claude-3-5-haiku-20241022",
-          max_tokens: options.maxTokens ?? 2048,
+          max_tokens: options.maxTokens ?? 8192,
           temperature: options.temperature ?? 0.7,
           system: systemInstruction,
           messages: [{ role: "user", content: prompt }],
@@ -171,6 +175,8 @@ export async function continueWritingCreative(
   }Ecco il testo scritto finora dall'autore:\n"""\n${contextText}\n"""\n\nContinua la narrazione in modo coerente e coinvolgente con 2-3 paragrafi naturali. Fornisci direttamente la continuazione:`;
 
   return generateWithCloudProvider(settings.cloud, prompt, {
+    maxTokens: 4096,
+    temperature: 0.7,
     systemInstruction:
       "Sei un romanziere e ghostwriter professionista. Mantieni rigorosamente lo stile narrativo, la voce del protagonista, il registro e il genere specificati nel contesto del romanzo.",
   });
@@ -190,11 +196,14 @@ export async function expandConceptCreative(
       : ""
   }Espandi e arricchisci questo passaggio narrativo/concettuale con dettagli sensoriali, sfumature psicologiche o un'ambientazione più vivida, rispettando lo stile e le regole del mondo:\n"""\n${selectedText}\n"""`;
 
-  return generateWithCloudProvider(settings.cloud, prompt);
+  return generateWithCloudProvider(settings.cloud, prompt, {
+    maxTokens: 4096,
+    temperature: 0.7,
+  });
 }
 
 /**
- * Genera una proposta di trama e struttura narrativa dai personaggi e dal profilo del progetto
+ * Genera una proposta di trama e struttura narrativa completa dai personaggi e dal profilo del progetto
  */
 export async function generatePlotFromBible(
   settings: EditorSettings,
@@ -218,10 +227,13 @@ Sulla base di questi personaggi, luoghi e premesse, progetta una proposta di TRA
    - **Atto III (Climax & Risoluzione)**: la resa dei conti finale e l'epilogo.
 4. **Scene Madri & Colpi di Scena Suggeriti**: 2 o 3 momenti di forte impatto emotivo o narrativo.
 
+IMPORTANTE: Sviluppa interamente e compiutamente ogni atto fino all'epilogo, senza interrompere la narrazione a metà.
 Rispondi in italiano con uno stile chiaro, evocativo e direttamente spendibile nella stesura.`;
 
   return generateWithCloudProvider(settings.cloud, prompt, {
+    maxTokens: 8192,
+    temperature: 0.7,
     systemInstruction:
-      "Sei un maestro di sceneggiatura e story editor esperto che aiuta gli scrittori a tessere trame profonde a partire dai personaggi, dalle ambientazioni e dalla premessa del libro.",
+      "Sei un maestro di sceneggiatura e story editor esperto che aiuta gli scrittori a tessere trame profonde a partire dai personaggi, dalle ambientazioni e dalla premessa del libro. Sviluppa sempre la trama fino alla conclusione naturale senza troncare o abbreviare il testo.",
   });
 }

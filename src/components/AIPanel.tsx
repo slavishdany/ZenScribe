@@ -59,7 +59,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     cloud: {
       activeProvider: 'gemini',
       providers: {
-        gemini: { apiKey: geminiApiKey, model: 'gemini-2.5-flash' },
+        gemini: { apiKey: geminiApiKey, model: 'gemini-1.5-flash' },
         openai: { apiKey: '', model: 'gpt-4o-mini' },
         anthropic: { apiKey: '', model: 'claude-3-5-haiku-20241022' },
         openrouter: { apiKey: '', model: 'deepseek/deepseek-chat' },

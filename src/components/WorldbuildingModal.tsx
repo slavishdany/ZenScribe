@@ -165,7 +165,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
     if (!generatedPlot) return;
     try {
       const id = `node-trama-${Date.now()}`;
-      await creaNodo(id, 'nota', 'Trama Principale', generatedPlot.slice(0, 1000) + (generatedPlot.length > 1000 ? '...' : ''));
+      await creaNodo(id, 'nota', 'Trama Principale', generatedPlot);
       await loadNodes();
       setPlotSavedFeedback("Trama archiviata tra le schede (Note) della Bibbia!");
       setTimeout(() => setPlotSavedFeedback(null), 3500);
@@ -307,7 +307,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
                   </div>
                 )}
 
-                <div className="p-3 bg-white dark:bg-stone-900 border border-indigo-100 dark:border-indigo-900/40 rounded-lg text-xs leading-relaxed max-h-56 overflow-y-auto whitespace-pre-wrap font-sans text-stone-800 dark:text-stone-200 shadow-inner">
+                <div className="p-3 bg-white dark:bg-stone-900 border border-indigo-100 dark:border-indigo-900/40 rounded-lg text-xs leading-relaxed max-h-96 overflow-y-auto whitespace-pre-wrap font-sans text-stone-800 dark:text-stone-200 shadow-inner">
                   {generatedPlot}
                 </div>
               </div>
