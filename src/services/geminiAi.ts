@@ -14,7 +14,7 @@ export async function generateWithGemini(
   const dummySettings: any = {
     activeProvider: "gemini",
     providers: {
-      gemini: { apiKey, model: "gemini-1.5-flash" },
+      gemini: { apiKey, model: "gemini-3.8-flash" },
     },
   };
   return generateWithCloudProvider(dummySettings, prompt, { systemInstruction });
@@ -30,7 +30,7 @@ export async function continueWritingCreative(
       cloud: {
         activeProvider: "gemini",
         providers: {
-          gemini: { apiKey: apiKeyOrSettings, model: "gemini-1.5-flash" },
+          gemini: { apiKey: apiKeyOrSettings, model: "gemini-3.8-flash" },
         },
       },
     };
@@ -49,7 +49,7 @@ export async function expandConceptCreative(
       cloud: {
         activeProvider: "gemini",
         providers: {
-          gemini: { apiKey: apiKeyOrSettings, model: "gemini-1.5-flash" },
+          gemini: { apiKey: apiKeyOrSettings, model: "gemini-3.8-flash" },
         },
       },
     };
@@ -68,7 +68,7 @@ export async function generatePlotFromBible(
       cloud: {
         activeProvider: "gemini",
         providers: {
-          gemini: { apiKey: apiKeyOrSettings, model: "gemini-1.5-flash" },
+          gemini: { apiKey: apiKeyOrSettings, model: "gemini-3.8-flash" },
         },
       },
     };

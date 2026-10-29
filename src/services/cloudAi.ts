@@ -31,9 +31,10 @@ export async function generateWithCloudProvider(
   switch (providerType) {
     case "gemini": {
       const genAI = new GoogleGenerativeAI(config.apiKey);
-      let modelName = config.model || "gemini-1.5-flash";
-      if (modelName.includes("2.5")) {
-        modelName = "gemini-1.5-flash";
+      let modelName = config.model || "gemini-3.8-flash";
+      // Auto-migrazione dai modelli deprecati da Google (es. gemini-2.0-flash -> gemini-3.8-flash)
+      if (modelName.includes("2.0") || modelName.includes("2.5") || !modelName.trim()) {
+        modelName = "gemini-3.8-flash";
       }
 
       const model = genAI.getGenerativeModel({
