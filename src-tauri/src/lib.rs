@@ -1,5 +1,6 @@
 pub mod engine;
 pub mod model_manager;
+pub mod project_io;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,11 @@ use crate::engine::NativeEngine;
 use crate::model_manager::{
     download_model_file, get_models_dir, get_preset_models_list, resolve_model_file, scan_local_models,
     LocalModelInfo, PresetModel,
+};
+use crate::project_io::{
+    html_to_markdown, open_folder_in_system_explorer, pick_folder_dialog, sanitize_filename,
+    save_file_dialog, write_full_project_to_directory, ChapterExportDto, ProjectProfileDto,
+    WorldNodeExportDto,
 };
 
 pub struct AppAiState {
@@ -107,7 +113,6 @@ fn delete_local_model<R: Runtime>(
     state: State<'_, AppAiState>,
     model_filename: String,
 ) -> Result<(), String> {
-    // Se è il modello attivo, scaricalo prima dalla memoria
     if let Some(ref active) = state.engine.get_active_model_name() {
         if active.eq_ignore_ascii_case(&model_filename) {
             state.engine.unload_model();
@@ -197,7 +202,6 @@ async fn generate_local_ai(
     let temp = temperature.unwrap_or(0.3);
     let max_tok = max_tokens.unwrap_or(1024);
 
-    // Esegui inferenza in un thread bloccante dedicato per non intasare l'asincronia di Tokio
     tokio::task::spawn_blocking(move || {
         engine.generate(&prompt, system_prompt.as_deref(), max_tok, temp)
     })
@@ -252,6 +256,81 @@ async fn rephrase_text_local(
 }
 
 // ============================================================================
+// Comandi per la Gestione File & Struttura del Progetto su Disco
+// ============================================================================
+
+/// Apre la finestra di dialogo nativa per selezionare una cartella di progetto sul computer
+#[tauri::command]
+async fn select_project_folder() -> Result<Option<String>, String> {
+    Ok(pick_folder_dialog().await)
+}
+
+/// Apre una cartella nel file explorer nativo di sistema (Windows Explorer)
+#[tauri::command]
+fn open_folder_in_explorer(folder_path: String) -> Result<(), String> {
+    open_folder_in_system_explorer(&folder_path)
+}
+
+/// Esporta il capitolo corrente su file tramite dialogo Salva con Nome
+#[tauri::command]
+async fn export_chapter_file(
+    title: String,
+    content: String,
+    format: Option<String>,
+) -> Result<Option<String>, String> {
+    let ext = format.unwrap_or_else(|| "md".to_string());
+    let default_name = format!("{}.{}", sanitize_filename(&title), ext);
+    if let Some(path) = save_file_dialog(&default_name, &ext).await {
+        let text_content = if ext == "txt" {
+            html_to_markdown(&content)
+        } else {
+            format!("# {}\n\n{}", title, html_to_markdown(&content))
+        };
+        std::fs::write(&path, text_content).map_err(|e| format!("Errore scrittura file: {}", e))?;
+        Ok(Some(path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Esporta il manoscritto completo unificato con tutti i capitoli
+#[tauri::command]
+async fn export_full_manuscript(
+    title: String,
+    chapters: Vec<ChapterExportDto>,
+    format: Option<String>,
+) -> Result<Option<String>, String> {
+    let ext = format.unwrap_or_else(|| "md".to_string());
+    let default_name = format!("{}_Completo.{}", sanitize_filename(&title), ext);
+    if let Some(path) = save_file_dialog(&default_name, &ext).await {
+        let mut manuscript = String::new();
+        manuscript.push_str(&format!("# {}\n\n---\n\n", title));
+        for ch in chapters {
+            manuscript.push_str(&format!(
+                "## {}\n\n{}\n\n---\n\n",
+                ch.title,
+                html_to_markdown(&ch.content)
+            ));
+        }
+        std::fs::write(&path, manuscript).map_err(|e| format!("Errore scrittura manoscritto: {}", e))?;
+        Ok(Some(path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Sincronizza l'intero progetto su una cartella fisica strutturata
+#[tauri::command]
+fn sync_project_to_folder(
+    folder_path: String,
+    project: ProjectProfileDto,
+    chapters: Vec<ChapterExportDto>,
+    nodes: Vec<WorldNodeExportDto>,
+) -> Result<String, String> {
+    write_full_project_to_directory(&folder_path, project, chapters, nodes)
+}
+
+// ============================================================================
 // Punto di ingresso dell'applicazione Tauri v2
 // ============================================================================
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -263,12 +342,14 @@ pub fn run() {
         .manage(app_ai_state)
         .setup(|app| {
             let app_handle = app.handle().clone();
-            // All'avvio dell'applicazione, cerca se c'è già un modello disponibile e caricalo in background
             std::thread::spawn(move || {
                 let state = app_handle.state::<AppAiState>();
                 let available = scan_local_models(&app_handle, None);
                 if let Some(first) = available.first() {
-                    println!("[ZenScribe] Trovato modello locale disponibile: {}. Caricamento automatico...", first.filename);
+                    println!(
+                        "[ZenScribe] Trovato modello locale disponibile: {}. Caricamento automatico...",
+                        first.filename
+                    );
                     if let Some(path) = resolve_model_file(&app_handle, &first.filename) {
                         if let Err(e) = state.engine.load_model(&path, &first.filename) {
                             eprintln!("[ZenScribe] Errore precaricamento modello iniziale: {}", e);
@@ -293,7 +374,12 @@ pub fn run() {
             restart_llama_server,
             generate_local_ai,
             correct_spelling_local,
-            rephrase_text_local
+            rephrase_text_local,
+            select_project_folder,
+            open_folder_in_explorer,
+            export_chapter_file,
+            export_full_manuscript,
+            sync_project_to_folder
         ])
         .build(tauri::generate_context!())
         .expect("Errore durante l'inizializzazione dell'applicazione Tauri");

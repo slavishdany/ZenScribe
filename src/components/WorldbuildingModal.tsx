@@ -5,10 +5,12 @@ import {
 } from 'lucide-react';
 import { GraphNode, creaNodo, eliminaNodo, ottieniMappaConcettuale, ottieniContestoNarrativo } from '../services/db';
 import { generatePlotFromBible } from '../services/geminiAi';
+import { EditorSettings } from '../types';
 
 interface WorldbuildingModalProps {
   isOpen: boolean;
   geminiApiKey?: string;
+  settings?: EditorSettings;
   onClose: () => void;
   onCreateChapterFromPlot?: (title: string, content: string) => Promise<void>;
   onOpenSettings?: () => void;
@@ -17,6 +19,7 @@ interface WorldbuildingModalProps {
 export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
   isOpen,
   geminiApiKey,
+  settings,
   onClose,
   onCreateChapterFromPlot,
   onOpenSettings,
@@ -113,16 +116,20 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
     }
   };
 
-  // Generazione Trama tramite Gemini Cloud
+  // Generazione Trama tramite Cloud AI
   const handleGeneratePlot = async () => {
-    if (!geminiApiKey || !geminiApiKey.trim()) {
-      setPlotError("Per generare la trama serve la chiave API di Gemini. Configurala nelle impostazioni.");
+    const activeProvider = settings?.cloud?.activeProvider || 'gemini';
+    const config = settings?.cloud?.providers[activeProvider];
+    const hasKey = Boolean(config?.apiKey?.trim() || activeProvider === 'custom' || geminiApiKey?.trim());
+
+    if (!hasKey) {
+      setPlotError(`Per generare la trama serve configurare le API cloud (${activeProvider.toUpperCase()}). Apri le impostazioni.`);
       return;
     }
 
     const bibleContent = await ottieniContestoNarrativo();
     if (!bibleContent.trim()) {
-      setPlotError("Aggiungi prima almeno un personaggio o un luogo nella Bibbia per dare materiale a Gemini!");
+      setPlotError("Aggiungi prima almeno un personaggio o un luogo nella Bibbia (o compila il profilo del romanzo)!");
       return;
     }
 
@@ -131,7 +138,8 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
     setPlotSavedFeedback(null);
 
     try {
-      const plot = await generatePlotFromBible(geminiApiKey, bibleContent, plotGuidance);
+      const target = settings || geminiApiKey!;
+      const plot = await generatePlotFromBible(target, bibleContent, plotGuidance);
       setGeneratedPlot(plot);
     } catch (err: any) {
       setPlotError(err.message || "Errore durante la generazione della trama.");

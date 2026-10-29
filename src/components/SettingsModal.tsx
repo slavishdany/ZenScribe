@@ -15,8 +15,19 @@ import {
   Sparkles,
   ChevronDown,
   ChevronUp,
+  Globe,
+  Server,
+  Zap,
 } from 'lucide-react';
-import { EditorSettings, ServerStatusInfo, LocalModelInfo, PresetModel, DownloadProgress } from '../types';
+import {
+  EditorSettings,
+  ServerStatusInfo,
+  LocalModelInfo,
+  PresetModel,
+  DownloadProgress,
+  CloudProviderType,
+  CloudSettings,
+} from '../types';
 import {
   fetchPresetModels,
   startModelDownload,
@@ -24,6 +35,18 @@ import {
   deleteLocalModel,
   listenDownloadProgress,
 } from '../services/localAi';
+
+export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
+  activeProvider: 'gemini',
+  providers: {
+    gemini: { apiKey: '', model: 'gemini-2.5-flash' },
+    openai: { apiKey: '', model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' },
+    anthropic: { apiKey: '', model: 'claude-3-5-haiku-20241022', baseUrl: 'https://api.anthropic.com/v1' },
+    openrouter: { apiKey: '', model: 'deepseek/deepseek-chat', baseUrl: 'https://openrouter.ai/api/v1' },
+    groq: { apiKey: '', model: 'llama-3.3-70b-versatile', baseUrl: 'https://api.groq.com/openai/v1' },
+    custom: { apiKey: '', model: 'llama3', baseUrl: 'http://localhost:11434/v1' },
+  },
+};
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -35,7 +58,70 @@ interface SettingsModalProps {
   onSaveSettings: (settings: EditorSettings) => void;
   onRefreshServer: () => void;
   onSwitchModel: (modelFilename: string) => Promise<void>;
+  onOpenProjectProfile?: () => void;
 }
+
+const PROVIDER_METADATA: Record<
+  CloudProviderType,
+  {
+    name: string;
+    description: string;
+    badge: string;
+    keyUrl?: string;
+    keyPlaceholder: string;
+    models: string[];
+    isCustomUrl?: boolean;
+  }
+> = {
+  gemini: {
+    name: 'Google Gemini',
+    description: 'Modelli ultra-veloci ed economici di Google AI Studio (Gemini 2.5 Flash)',
+    badge: 'Consigliato',
+    keyUrl: 'https://aistudio.google.com/app/apikey',
+    keyPlaceholder: 'AIzaSy...',
+    models: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+  },
+  openai: {
+    name: 'OpenAI',
+    description: 'GPT-4o, GPT-4o-mini e modelli di ragionamento avanzato',
+    badge: 'Ufficiale',
+    keyUrl: 'https://platform.openai.com/api-keys',
+    keyPlaceholder: 'sk-proj-...',
+    models: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'],
+  },
+  anthropic: {
+    name: 'Anthropic Claude',
+    description: 'La migliore prosa letteraria e sfumature creative (Claude 3.5 Sonnet & Haiku)',
+    badge: 'Scrittura Top',
+    keyUrl: 'https://console.anthropic.com/',
+    keyPlaceholder: 'sk-ant-api03-...',
+    models: ['claude-3-5-haiku-20241022', 'claude-3-5-sonnet-20241022'],
+  },
+  openrouter: {
+    name: 'OpenRouter',
+    description: 'Piattaforma unificata: DeepSeek V3/R1, Llama 3.3, Claude e centinaia di modelli',
+    badge: 'Flessibile',
+    keyUrl: 'https://openrouter.ai/keys',
+    keyPlaceholder: 'sk-or-v1-...',
+    models: ['deepseek/deepseek-chat', 'deepseek/deepseek-r1', 'meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-3.5-sonnet'],
+  },
+  groq: {
+    name: 'Groq Cloud',
+    description: 'Inferenza hardware LPUs a velocità istantanea (centinaia di token al secondo)',
+    badge: 'Ultra Rapido',
+    keyUrl: 'https://console.groq.com/keys',
+    keyPlaceholder: 'gsk_...',
+    models: ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768'],
+  },
+  custom: {
+    name: 'Server Personalizzato (OpenAI-Compatible)',
+    description: 'Collega Ollama, vLLM, LM Studio, Together AI o qualsiasi server locale o cloud',
+    badge: 'Avanzato',
+    keyPlaceholder: 'Opzionale (se richiesta dal server)...',
+    models: ['llama3', 'mistral', 'qwen2.5', 'custom-model'],
+    isCustomUrl: true,
+  },
+};
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -48,8 +134,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onRefreshServer,
   onSwitchModel,
 }) => {
-  const [localSettings, setLocalSettings] = useState<EditorSettings>(settings);
-  const [showKey, setShowKey] = useState(false);
+  // Inizializza impostazioni con fallback per cloud multi-provider
+  const [localSettings, setLocalSettings] = useState<EditorSettings>(() => {
+    const cloud: CloudSettings = settings.cloud || DEFAULT_CLOUD_SETTINGS;
+    // Migra eventuale geminiApiKey preesistente
+    if (settings.geminiApiKey && !cloud.providers.gemini.apiKey) {
+      cloud.providers.gemini.apiKey = settings.geminiApiKey;
+    }
+    return { ...settings, cloud };
+  });
+
+  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [isSwitchingModel, setIsSwitchingModel] = useState(false);
   const [switchFeedback, setSwitchFeedback] = useState<string | null>(null);
 
@@ -66,14 +161,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [customFormError, setCustomFormError] = useState<string | null>(null);
 
   // Tabs di configurazione
-  const [activeTab, setActiveTab] = useState<'models' | 'editor' | 'gemini'>('models');
+  const [activeTab, setActiveTab] = useState<'models' | 'cloud' | 'editor'>('models');
 
-  // Carica i preset all'apertura
+  // Provider cloud attualmente visualizzato nella scheda
+  const [selectedCloudProvider, setSelectedCloudProvider] = useState<CloudProviderType>(
+    localSettings.cloud?.activeProvider || 'gemini'
+  );
+
   useEffect(() => {
     if (isOpen) {
       fetchPresetModels().then(setPresets);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    const cloud: CloudSettings = settings.cloud || DEFAULT_CLOUD_SETTINGS;
+    if (settings.geminiApiKey && !cloud.providers.gemini.apiKey) {
+      cloud.providers.gemini.apiKey = settings.geminiApiKey;
+    }
+    setLocalSettings({ ...settings, cloud });
+    setSelectedCloudProvider(cloud.activeProvider || 'gemini');
+    setSwitchFeedback(null);
+  }, [settings, isOpen]);
 
   // Iscrizione in tempo reale agli eventi di progresso download
   useEffect(() => {
@@ -107,15 +216,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     };
   }, [onRefreshServer]);
 
-  useEffect(() => {
-    setLocalSettings(settings);
-    setSwitchFeedback(null);
-  }, [settings, isOpen]);
-
   if (!isOpen) return null;
 
   const handleSave = () => {
-    onSaveSettings(localSettings);
+    // Sincronizza anche legacy geminiApiKey
+    const currentGeminiKey = localSettings.cloud.providers.gemini.apiKey;
+    onSaveSettings({
+      ...localSettings,
+      geminiApiKey: currentGeminiKey,
+    });
     onClose();
   };
 
@@ -206,6 +315,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowCustomForm(false);
   };
 
+  const updateCloudConfig = (
+    provider: CloudProviderType,
+    field: 'apiKey' | 'model' | 'baseUrl',
+    value: string
+  ) => {
+    setLocalSettings((prev) => {
+      const currentCloud = prev.cloud || DEFAULT_CLOUD_SETTINGS;
+      const currentProviderConfig = currentCloud.providers[provider] || { apiKey: '', model: '' };
+
+      return {
+        ...prev,
+        cloud: {
+          ...currentCloud,
+          providers: {
+            ...currentCloud.providers,
+            [provider]: {
+              ...currentProviderConfig,
+              [field]: value,
+            },
+          },
+        },
+      };
+    });
+  };
+
+  const setActiveCloudProvider = (provider: CloudProviderType) => {
+    setLocalSettings((prev) => ({
+      ...prev,
+      cloud: {
+        ...(prev.cloud || DEFAULT_CLOUD_SETTINGS),
+        activeProvider: provider,
+      },
+    }));
+  };
+
+  const activeProvider = localSettings.cloud?.activeProvider || 'gemini';
+  const activeProviderMeta = PROVIDER_METADATA[selectedCloudProvider];
+  const activeProviderConfig = localSettings.cloud?.providers[selectedCloudProvider] || { apiKey: '', model: '' };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -217,9 +365,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <div>
               <h3 className="font-semibold text-base text-stone-900 dark:text-stone-100">
-                Impostazioni & Modelli AI
+                Impostazioni ZenScribe
               </h3>
-              <p className="text-xs text-stone-500">Gestisci i modelli locali e le preferenze dell'editor</p>
+              <p className="text-xs text-stone-500">Gestisci i modelli AI (locali e cloud) e l'editor</p>
             </div>
           </div>
           <button
@@ -241,7 +389,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }`}
           >
             <Cpu className="w-3.5 h-3.5" />
-            <span>Modelli AI Locali (.gguf)</span>
+            <span>AI Locale (.gguf)</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('cloud')}
+            className={`py-3 px-3 text-xs font-medium border-b-2 flex items-center space-x-2 transition-colors ${
+              activeTab === 'cloud'
+                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400'
+                : 'border-transparent text-stone-500 hover:text-stone-700 dark:hover:text-stone-300'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>Cloud AI Multi-API</span>
           </button>
           <button
             onClick={() => setActiveTab('editor')}
@@ -252,26 +411,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>Tipografia Editor</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('gemini')}
-            className={`py-3 px-3 text-xs font-medium border-b-2 flex items-center space-x-2 transition-colors ${
-              activeTab === 'gemini'
-                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400'
-                : 'border-transparent text-stone-500 hover:text-stone-700 dark:hover:text-stone-300'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Google Gemini (Cloud)</span>
+            <span>Tipografia</span>
           </button>
         </div>
 
         {/* Form Body */}
         <div className="p-6 space-y-6 text-xs overflow-y-auto flex-1">
+          {/* TAB 1: MODELLI AI LOCALI GGUF */}
           {activeTab === 'models' && (
             <div className="space-y-6">
-              {/* Stato del motore nativo */}
+              {/* Stato motore nativo */}
               <div className="p-3.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/40 flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <div
@@ -282,13 +431,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div>
                     <div className="font-semibold text-stone-900 dark:text-stone-100">
                       {serverStatus.isReady
-                        ? `Motore AI Pronto (${activeModelName || 'Modello attivo'})`
+                        ? `Motore AI Nativo Pronto (${activeModelName || 'Modello attivo'})`
                         : 'Nessun modello attivo in memoria'}
                     </div>
                     <div className="text-[11px] text-stone-500">
                       {serverStatus.isReady
-                        ? 'Inferenza nativa integrata ad alta velocità (senza Sidecar esterno)'
-                        : 'Seleziona o scarica un modello per abilitare la correzione bozze offline.'}
+                        ? 'Inferenza in memoria (Candle pure Rust, zero sidecar esterno)'
+                        : 'Seleziona o scarica un modello per abilitare la correzione offline.'}
                     </div>
                   </div>
                 </div>
@@ -431,7 +580,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Sezione Opzione Personalizzata (Utenti Avanzati) */}
+              {/* Sezione Opzione Personalizzata */}
               <div className="border border-stone-200 dark:border-stone-800 rounded-xl overflow-hidden bg-stone-50/40 dark:bg-stone-950/30">
                 <button
                   type="button"
@@ -583,16 +732,198 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 )}
               </div>
-
-              {switchFeedback && (
-                <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300 flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-indigo-600 flex-shrink-0" />
-                  <span>{switchFeedback}</span>
-                </div>
-              )}
             </div>
           )}
 
+          {/* TAB 2: CLOUD AI MULTI-PROVIDER */}
+          {activeTab === 'cloud' && (
+            <div className="space-y-6">
+              {/* Selezione Provider Attivo */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-stone-900 dark:text-stone-100 uppercase tracking-wider text-[11px] text-stone-500 flex items-center space-x-1.5">
+                    <Globe className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Seleziona il Provider Cloud Predefinito</span>
+                  </h4>
+                  <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium">
+                    Attivo: {PROVIDER_METADATA[activeProvider].name}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {(Object.keys(PROVIDER_METADATA) as CloudProviderType[]).map((key) => {
+                    const meta = PROVIDER_METADATA[key];
+                    const isCurrentActive = activeProvider === key;
+                    const isViewing = selectedCloudProvider === key;
+
+                    return (
+                      <div
+                        key={key}
+                        onClick={() => {
+                          setSelectedCloudProvider(key);
+                          setActiveCloudProvider(key);
+                        }}
+                        className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between ${
+                          isCurrentActive
+                            ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/40 dark:border-indigo-500 shadow-sm'
+                            : isViewing
+                            ? 'border-stone-400 dark:border-stone-600 bg-stone-50 dark:bg-stone-850'
+                            : 'border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 hover:border-stone-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-semibold text-xs text-stone-900 dark:text-stone-100">
+                              {meta.name}
+                            </span>
+                            {isCurrentActive && (
+                              <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                            )}
+                          </div>
+                          <p className="text-[10px] text-stone-500 line-clamp-2 leading-tight">
+                            {meta.description}
+                          </p>
+                        </div>
+                        <div className="mt-2.5 pt-1.5 border-t border-stone-100 dark:border-stone-800/80 flex items-center justify-between">
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300">
+                            {meta.badge}
+                          </span>
+                          {isCurrentActive ? (
+                            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
+                              In uso
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-stone-400 hover:text-stone-600">
+                              Usa
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Dettagli di configurazione del provider visualizzato */}
+              <div className="p-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 space-y-4 shadow-sm">
+                <div className="flex items-center justify-between pb-3 border-b border-stone-100 dark:border-stone-800">
+                  <div>
+                    <h5 className="font-semibold text-stone-900 dark:text-stone-100 text-sm">
+                      Configura {activeProviderMeta.name}
+                    </h5>
+                    <p className="text-[11px] text-stone-500">
+                      Inserisci la chiave API e seleziona il modello da utilizzare
+                    </p>
+                  </div>
+                  {activeProviderMeta.keyUrl && (
+                    <a
+                      href={activeProviderMeta.keyUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1"
+                    >
+                      <span>Ottieni API Key</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+
+                {/* API Key */}
+                <div>
+                  <label className="block text-[11px] font-medium text-stone-700 dark:text-stone-300 mb-1">
+                    API Key {selectedCloudProvider === 'custom' ? '(Opzionale)' : ''}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showKeys[selectedCloudProvider] ? 'text' : 'password'}
+                      value={activeProviderConfig.apiKey || ''}
+                      onChange={(e) =>
+                        updateCloudConfig(selectedCloudProvider, 'apiKey', e.target.value)
+                      }
+                      placeholder={activeProviderMeta.keyPlaceholder}
+                      className="w-full p-2.5 text-xs font-mono rounded-xl border border-stone-200 dark:border-stone-700 bg-stone-50/50 dark:bg-stone-950/50 text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 pr-16"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowKeys({
+                          ...showKeys,
+                          [selectedCloudProvider]: !showKeys[selectedCloudProvider],
+                        })
+                      }
+                      className="absolute right-2.5 top-2.5 text-[11px] text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 font-medium"
+                    >
+                      {showKeys[selectedCloudProvider] ? 'Nascondi' : 'Mostra'}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-stone-400 mt-1">
+                    Le chiavi API sono memorizzate unicamente in locale nel tuo archivio privato e non lasciano mai il computer.
+                  </p>
+                </div>
+
+                {/* Modello */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-stone-700 dark:text-stone-300 mb-1">
+                      Modello Selezionato
+                    </label>
+                    <input
+                      type="text"
+                      value={activeProviderConfig.model || ''}
+                      onChange={(e) =>
+                        updateCloudConfig(selectedCloudProvider, 'model', e.target.value)
+                      }
+                      placeholder={activeProviderMeta.models[0]}
+                      className="w-full p-2 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50/50 dark:bg-stone-950/50 text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  {/* Endpoint URL (per custom o se personalizzabile) */}
+                  {activeProviderMeta.isCustomUrl && (
+                    <div>
+                      <label className="block text-[11px] font-medium text-stone-700 dark:text-stone-300 mb-1">
+                        Base URL API
+                      </label>
+                      <input
+                        type="text"
+                        value={activeProviderConfig.baseUrl || ''}
+                        onChange={(e) =>
+                          updateCloudConfig(selectedCloudProvider, 'baseUrl', e.target.value)
+                        }
+                        placeholder="http://localhost:11434/v1"
+                        className="w-full p-2 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50/50 dark:bg-stone-950/50 text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Suggerimenti Modelli Rapidi */}
+                <div>
+                  <span className="text-[10px] text-stone-400 block mb-1.5">
+                    Modelli suggeriti con un click:
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeProviderMeta.models.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => updateCloudConfig(selectedCloudProvider, 'model', m)}
+                        className={`text-[10px] font-mono px-2 py-1 rounded-md border transition-colors ${
+                          activeProviderConfig.model === m
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
+                            : 'border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: TIPOGRAFIA EDITOR */}
           {activeTab === 'editor' && (
             <div className="space-y-5">
               <div className="space-y-4">
@@ -637,42 +968,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {activeTab === 'gemini' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="font-semibold text-stone-900 dark:text-stone-100 uppercase tracking-wider text-[11px] text-stone-500">
-                  Fase 2: Google Gemini (Cloud Creativo)
-                </h4>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1"
-                >
-                  <span>Ottieni chiave gratis</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <p className="text-stone-500 text-[11px] leading-relaxed">
-                Utilizzato per la continuazione creativa e la generazione di trame complesse. La chiave è salvata
-                esclusivamente in locale nel tuo archivio privato.
-              </p>
-              <div className="relative">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={localSettings.geminiApiKey}
-                  onChange={(e) => setLocalSettings({ ...localSettings, geminiApiKey: e.target.value })}
-                  placeholder="AIzaSy..."
-                  className="w-full p-2.5 text-xs font-mono rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/50 text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 pr-16"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowKey(!showKey)}
-                  className="absolute right-2.5 top-2.5 text-[11px] text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 font-medium"
-                >
-                  {showKey ? 'Nascondi' : 'Mostra'}
-                </button>
-              </div>
+          {switchFeedback && (
+            <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300 flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+              <span>{switchFeedback}</span>
             </div>
           )}
         </div>
@@ -680,7 +979,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-stone-200 dark:border-stone-800 flex items-center justify-between bg-stone-50/70 dark:bg-stone-950/60">
           <span className="text-[11px] text-stone-400">
-            ZenScribe v0.1.0 • Motore Nativo Rust
+            ZenScribe • Motore Nativo Rust + Multi-API Cloud
           </span>
           <div className="flex items-center space-x-2">
             <button

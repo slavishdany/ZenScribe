@@ -4,12 +4,40 @@ import { EditorToolbar } from './components/EditorToolbar';
 import { ZenEditor } from './components/ZenEditor';
 import { StatusBar } from './components/StatusBar';
 import { AIPanel } from './components/AIPanel';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsModal, DEFAULT_CLOUD_SETTINGS } from './components/SettingsModal';
 import { ChapterSidebar, ChapterItem } from './components/ChapterSidebar';
 import { WorldbuildingModal } from './components/WorldbuildingModal';
-import { EditorSettings, ServerStatusInfo, EditorFont, EditorWidth, LocalModelInfo } from './types';
-import { checkLocalServerStatus, fetchAvailableModels, fetchActiveModel, switchLocalModel } from './services/localAi';
-import { elencaCapitoli, creaNuovoCapitolo, eliminaCapitolo, rinominaCapitolo, salvaCapitolo } from './services/db';
+import { ProjectProfileModal } from './components/ProjectProfileModal';
+import {
+  EditorSettings,
+  ServerStatusInfo,
+  EditorFont,
+  EditorWidth,
+  LocalModelInfo,
+  ProjectProfile,
+} from './types';
+import {
+  checkLocalServerStatus,
+  fetchAvailableModels,
+  fetchActiveModel,
+  switchLocalModel,
+} from './services/localAi';
+import {
+  elencaCapitoli,
+  creaNuovoCapitolo,
+  eliminaCapitolo,
+  rinominaCapitolo,
+  salvaCapitolo,
+  caricaProfiloProgetto,
+  ottieniMappaConcettuale,
+} from './services/db';
+import {
+  selectProjectFolder,
+  openFolderInExplorer,
+  exportChapterToFile,
+  exportFullManuscript,
+  syncProjectToFolder,
+} from './services/projectFiles';
 
 const DEFAULT_SETTINGS: EditorSettings = {
   font: 'serif',
@@ -19,6 +47,7 @@ const DEFAULT_SETTINGS: EditorSettings = {
   geminiApiKey: '',
   theme: 'light',
   zenMode: false,
+  cloud: DEFAULT_CLOUD_SETTINGS,
 };
 
 export const App: React.FC = () => {
@@ -27,7 +56,12 @@ export const App: React.FC = () => {
     const saved = localStorage.getItem('zenscribe_settings');
     if (saved) {
       try {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        const parsed = JSON.parse(saved);
+        const cloud = parsed.cloud || DEFAULT_CLOUD_SETTINGS;
+        if (parsed.geminiApiKey && !cloud.providers.gemini.apiKey) {
+          cloud.providers.gemini.apiKey = parsed.geminiApiKey;
+        }
+        return { ...DEFAULT_SETTINGS, ...parsed, cloud };
       } catch (e) {
         return DEFAULT_SETTINGS;
       }
@@ -39,11 +73,28 @@ export const App: React.FC = () => {
   const [wordCount, setWordCount] = useState(0);
   const [characterCount, setCharacterCount] = useState(0);
 
+  // Profilo Progetto (Stile narrativo, Genere, Premessa)
+  const [projectProfile, setProjectProfile] = useState<ProjectProfile>({
+    title: '',
+    genre: '',
+    description: '',
+    styleTone: '',
+    narrativeVoice: '',
+    targetAudience: '',
+    narrativeNotes: '',
+  });
+
+  // Cartella di sincronizzazione su disco (.md files)
+  const [projectFolder, setProjectFolder] = useState<string | null>(() => {
+    return localStorage.getItem('zenscribe_project_folder') || null;
+  });
+
   // Capitoli & SQLite
   const [chapters, setChapters] = useState<ChapterItem[]>([]);
   const [activeChapterId, setActiveChapterId] = useState<string>('capitolo-principale');
   const [isChaptersOpen, setIsChaptersOpen] = useState(false);
   const [isWorldbuildingOpen, setIsWorldbuildingOpen] = useState(false);
+  const [isProjectProfileOpen, setIsProjectProfileOpen] = useState(false);
 
   // Modelli Locali
   const [availableModels, setAvailableModels] = useState<LocalModelInfo[]>([]);
@@ -76,6 +127,37 @@ export const App: React.FC = () => {
     localStorage.setItem('zenscribe_settings', JSON.stringify(newSettings));
   };
 
+  // Caricamento profilo progetto da SQLite
+  const refreshProjectProfile = useCallback(async () => {
+    try {
+      const p = await caricaProfiloProgetto();
+      setProjectProfile(p);
+    } catch (e) {
+      console.warn('[App] Errore lettura profilo progetto:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshProjectProfile();
+  }, [refreshProjectProfile]);
+
+  // Sincronizzazione automatica cartella su disco
+  const triggerAutoSync = useCallback(
+    async (currentChapters?: ChapterItem[], currentProfile?: ProjectProfile) => {
+      if (!projectFolder) return;
+      try {
+        const chList = currentChapters || chapters;
+        const prof = currentProfile || projectProfile;
+        const map = await ottieniMappaConcettuale();
+        await syncProjectToFolder(projectFolder, prof, chList, map.nodes);
+        console.log('[AutoSync] Progetto sincronizzato su:', projectFolder);
+      } catch (e) {
+        console.warn('[AutoSync] Errore sincronizzazione su disco:', e);
+      }
+    },
+    [projectFolder, chapters, projectProfile]
+  );
+
   // Caricamento capitoli da SQLite
   const refreshChapters = useCallback(async () => {
     try {
@@ -84,13 +166,14 @@ export const App: React.FC = () => {
         setChapters(list);
         setActiveChapterId((prev) => (list.some((c) => c.id === prev) ? prev : list[0].id));
       } else {
-        setChapters([
+        const initialChapters = [
           {
             id: 'capitolo-principale',
             title: 'Capitolo 1: La Chiarezza',
             content: '',
           },
-        ]);
+        ];
+        setChapters(initialChapters);
       }
     } catch (e) {
       console.warn('[DB] Errore lettura capitoli:', e);
@@ -156,7 +239,7 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Health check del server Llamafile (Porta 8080)
+  // Health check del motore AI locale nativo
   const verifyServer = useCallback(async () => {
     setServerStatus((prev) => ({ ...prev, isChecking: true }));
     const ready = await checkLocalServerStatus();
@@ -168,7 +251,6 @@ export const App: React.FC = () => {
     });
   }, [activeModelName]);
 
-  // Polling periodico per verificare la disponibilità del motore locale
   useEffect(() => {
     verifyServer();
     refreshModelsList();
@@ -183,10 +265,9 @@ export const App: React.FC = () => {
     setActiveModelName(result.filename);
     handleSaveSettings({ ...settings, selectedLocalModel: result.filename });
     await refreshModelsList();
-    // Attendi brevemente che il modello termini di caricarsi in memoria
     setTimeout(() => {
       verifyServer();
-    }, 2500);
+    }, 1500);
   };
 
   // Gestione apertura AI Assistant con selezione
@@ -212,6 +293,49 @@ export const App: React.FC = () => {
     editorInstance.chain().focus().insertContent(`\n\n${newText}`).run();
   };
 
+  // Operazioni su File e Cartella di Progetto
+  const handleSelectProjectFolder = async () => {
+    const selected = await selectProjectFolder();
+    if (selected) {
+      setProjectFolder(selected);
+      localStorage.setItem('zenscribe_project_folder', selected);
+      triggerAutoSync(chapters, projectProfile);
+    }
+  };
+
+  const handleSyncProjectFolder = async () => {
+    if (!projectFolder) {
+      handleSelectProjectFolder();
+      return;
+    }
+    await triggerAutoSync(chapters, projectProfile);
+    alert(`Progetto '${projectProfile.title || 'ZenScribe'}' sincronizzato con successo in:\n${projectFolder}`);
+  };
+
+  const handleOpenFolderInExplorer = async () => {
+    if (projectFolder) {
+      await openFolderInExplorer(projectFolder);
+    }
+  };
+
+  const handleExportChapter = async (format: 'md' | 'txt') => {
+    const activeChap = chapters.find((c) => c.id === activeChapterId);
+    const title = activeChap?.title || 'Capitolo';
+    const content = editorInstance ? editorInstance.getHTML() : activeChap?.content || '';
+    const savedPath = await exportChapterToFile(title, content, format);
+    if (savedPath) {
+      console.log('Capitolo esportato su:', savedPath);
+    }
+  };
+
+  const handleExportManuscript = async (format: 'md' | 'txt') => {
+    const title = projectProfile.title || 'Manoscritto';
+    const savedPath = await exportFullManuscript(title, chapters, format);
+    if (savedPath) {
+      console.log('Manoscritto completo esportato su:', savedPath);
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen bg-zen-bg dark:bg-zen-darkBg text-zen-text dark:text-zen-darkText overflow-hidden select-text">
       {/* Barra degli Strumenti Superiore */}
@@ -221,6 +345,7 @@ export const App: React.FC = () => {
         width={settings.width}
         theme={settings.theme}
         zenMode={settings.zenMode}
+        projectTitle={projectProfile.title}
         onFontChange={(font: EditorFont) => handleSaveSettings({ ...settings, font })}
         onWidthChange={(width: EditorWidth) => handleSaveSettings({ ...settings, width })}
         onThemeToggle={() =>
@@ -231,6 +356,9 @@ export const App: React.FC = () => {
         }
         onToggleChapters={() => setIsChaptersOpen(!isChaptersOpen)}
         onOpenWorldbuilding={() => setIsWorldbuildingOpen(true)}
+        onOpenProjectProfile={() => setIsProjectProfileOpen(true)}
+        onExportChapter={handleExportChapter}
+        onExportManuscript={handleExportManuscript}
         onOpenAIPanel={() => {
           if (editorInstance) {
             const { from, to } = editorInstance.state.selection;
@@ -242,11 +370,13 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Barra Laterale Capitoli (SQLite) */}
+      {/* Barra Laterale Capitoli (SQLite + File Sync) */}
       <ChapterSidebar
         isOpen={isChaptersOpen}
         chapters={chapters}
         activeChapterId={activeChapterId}
+        projectProfile={projectProfile}
+        projectFolder={projectFolder}
         onSelectChapter={(id) => {
           setActiveChapterId(id);
           setIsChaptersOpen(false);
@@ -255,9 +385,17 @@ export const App: React.FC = () => {
         onDeleteChapter={handleDeleteChapter}
         onRenameChapter={handleRenameChapter}
         onClose={() => setIsChaptersOpen(false)}
+        onOpenProjectProfile={() => {
+          setIsChaptersOpen(false);
+          setIsProjectProfileOpen(true);
+        }}
+        onSelectProjectFolder={handleSelectProjectFolder}
+        onSyncProjectFolder={handleSyncProjectFolder}
+        onOpenFolderInExplorer={handleOpenFolderInExplorer}
+        onExportManuscript={handleExportManuscript}
       />
 
-      {/* Editor Centrale (Focus Principale dell'Harness) */}
+      {/* Editor Centrale */}
       <ZenEditor
         activeChapterId={activeChapterId}
         font={settings.font}
@@ -271,7 +409,10 @@ export const App: React.FC = () => {
         }}
         onEditorReady={(editor) => setEditorInstance(editor)}
         onOpenAIWithSelection={handleOpenAIWithSelection}
-        onChapterSaved={refreshChapters}
+        onChapterSaved={() => {
+          refreshChapters();
+          triggerAutoSync();
+        }}
       />
 
       {/* Barra di Stato Inferiore */}
@@ -280,7 +421,10 @@ export const App: React.FC = () => {
         characterCount={characterCount}
         serverStatus={serverStatus}
         activeModelName={activeModelName}
-        hasGeminiKey={Boolean(settings.geminiApiKey?.trim())}
+        hasGeminiKey={Boolean(
+          settings.cloud?.providers[settings.cloud?.activeProvider || 'gemini']?.apiKey?.trim() ||
+            settings.geminiApiKey?.trim()
+        )}
         zenMode={settings.zenMode}
         onToggleZenMode={() => handleSaveSettings({ ...settings, zenMode: !settings.zenMode })}
         onOpenSettings={() => {
@@ -290,13 +434,14 @@ export const App: React.FC = () => {
         onRefreshServer={verifyServer}
       />
 
-      {/* Pannello Assistente AI (Locale + Cloud) */}
+      {/* Pannello Assistente AI (Locale Nativo + Cloud Multi-Provider) */}
       <AIPanel
         isOpen={isAIPanelOpen}
         selectedText={aiSelectedText}
         serverStatus={serverStatus}
         activeModelName={activeModelName}
-        geminiApiKey={settings.geminiApiKey}
+        geminiApiKey={settings.geminiApiKey || ''}
+        settings={settings}
         onClose={() => setIsAIPanelOpen(false)}
         onReplaceText={handleReplaceText}
         onInsertAfter={handleInsertAfter}
@@ -306,10 +451,11 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Modal Bibbia del Romanzo (Personaggi & Luoghi da SQLite) */}
+      {/* Modal Bibbia del Romanzo (Personaggi & Luoghi) */}
       <WorldbuildingModal
         isOpen={isWorldbuildingOpen}
         geminiApiKey={settings.geminiApiKey}
+        settings={settings}
         onClose={() => setIsWorldbuildingOpen(false)}
         onCreateChapterFromPlot={handleCreateChapterFromPlot}
         onOpenSettings={() => {
@@ -318,7 +464,17 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Modal Impostazioni con Switch Modelli */}
+      {/* Modal Profilo Progetto & Stile Narrativo */}
+      <ProjectProfileModal
+        isOpen={isProjectProfileOpen}
+        onClose={() => setIsProjectProfileOpen(false)}
+        onProjectUpdated={(newProfile) => {
+          setProjectProfile(newProfile);
+          triggerAutoSync(chapters, newProfile);
+        }}
+      />
+
+      {/* Modal Impostazioni Generali, AI Locale GGUF & Multi-Cloud */}
       <SettingsModal
         isOpen={isSettingsOpen}
         settings={settings}

@@ -1,5 +1,18 @@
 import React, { useState } from 'react';
-import { BookOpen, Plus, Trash2, Edit2, Check, X, FileText } from 'lucide-react';
+import {
+  BookOpen,
+  Plus,
+  Trash2,
+  Edit2,
+  Check,
+  X,
+  FileText,
+  FolderOpen,
+  FolderSync,
+  BookMarked,
+  Download,
+} from 'lucide-react';
+import { ProjectProfile } from '../types';
 
 export interface ChapterItem {
   id: string;
@@ -11,25 +24,40 @@ interface ChapterSidebarProps {
   isOpen: boolean;
   chapters: ChapterItem[];
   activeChapterId: string;
+  projectProfile: ProjectProfile;
+  projectFolder: string | null;
   onSelectChapter: (id: string) => void;
   onCreateChapter: () => void;
   onDeleteChapter: (id: string) => void;
   onRenameChapter: (id: string, newTitle: string) => void;
   onClose: () => void;
+  onOpenProjectProfile: () => void;
+  onSelectProjectFolder: () => void;
+  onSyncProjectFolder: () => void;
+  onOpenFolderInExplorer: () => void;
+  onExportManuscript: (format: 'md' | 'txt') => void;
 }
 
 export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
   isOpen,
   chapters,
   activeChapterId,
+  projectProfile,
+  projectFolder,
   onSelectChapter,
   onCreateChapter,
   onDeleteChapter,
   onRenameChapter,
   onClose,
+  onOpenProjectProfile,
+  onSelectProjectFolder,
+  onSyncProjectFolder,
+  onOpenFolderInExplorer,
+  onExportManuscript,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
   if (!isOpen) return null;
 
@@ -52,13 +80,17 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
     setEditingId(null);
   };
 
+  const folderName = projectFolder
+    ? projectFolder.split(/[\\/]/).filter(Boolean).pop() || projectFolder
+    : null;
+
   return (
-    <div className="fixed inset-y-0 left-0 z-40 w-72 bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-800 shadow-xl flex flex-col animate-fade-in select-none">
+    <div className="fixed inset-y-0 left-0 z-40 w-80 bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-800 shadow-xl flex flex-col animate-fade-in select-none">
       {/* Intestazione */}
-      <div className="p-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between bg-stone-50/50 dark:bg-stone-950/40">
-        <div className="flex items-center space-x-2 text-stone-800 dark:text-stone-200 font-medium text-sm">
+      <div className="p-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between bg-stone-50/60 dark:bg-stone-950/40">
+        <div className="flex items-center space-x-2 text-stone-800 dark:text-stone-200 font-semibold text-sm">
           <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-          <span>Capitoli & Sezioni</span>
+          <span>Struttura Progetto</span>
         </div>
         <button
           onClick={onClose}
@@ -69,8 +101,82 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
         </button>
       </div>
 
-      {/* Lista capitoli da SQLite */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-1.5 text-xs">
+      {/* Profilo del Romanzo & Cartella su Disco */}
+      <div className="p-3 border-b border-stone-200 dark:border-stone-800 space-y-2 bg-stone-50/30 dark:bg-stone-950/20 text-xs">
+        {/* Card Profilo Progetto */}
+        <div
+          onClick={onOpenProjectProfile}
+          className="p-2.5 rounded-xl border border-stone-200 dark:border-stone-800 hover:border-indigo-400 dark:hover:border-indigo-600 bg-white dark:bg-stone-900 cursor-pointer transition-all shadow-sm group"
+        >
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-semibold text-stone-900 dark:text-stone-100 flex items-center space-x-1.5 truncate">
+              <BookMarked className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+              <span className="truncate">{projectProfile.title || 'Nuovo Progetto (Senza Titolo)'}</span>
+            </span>
+            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
+              Modifica
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-1.5 text-[10px] text-stone-500">
+            <span>{projectProfile.genre || 'Genere non impostato'}</span>
+            {projectProfile.styleTone && (
+              <>
+                <span>•</span>
+                <span className="truncate">{projectProfile.styleTone}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Gestione Cartella su Disco */}
+        <div className="p-2 rounded-lg border border-dashed border-stone-200 dark:border-stone-800 flex items-center justify-between text-[11px]">
+          {projectFolder ? (
+            <>
+              <div className="flex items-center space-x-1.5 text-stone-700 dark:text-stone-300 truncate mr-2">
+                <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                <span className="truncate font-mono" title={projectFolder}>
+                  📁 {folderName}
+                </span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <button
+                  type="button"
+                  onClick={onSyncProjectFolder}
+                  className="p-1 rounded hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200"
+                  title="Sincronizza file su disco ora"
+                >
+                  <FolderSync className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenFolderInExplorer}
+                  className="p-1 rounded hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200"
+                  title="Apri in Esplora File"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onSelectProjectFolder}
+              className="w-full text-left text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1.5 font-medium"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>Collega cartella su disco...</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Lista capitoli */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-1 text-xs">
+        <div className="flex items-center justify-between text-[10px] uppercase font-semibold text-stone-400 px-1 mb-1 tracking-wider">
+          <span>Capitoli del Libro ({chapters.length})</span>
+        </div>
+
         {chapters.length === 0 ? (
           <div className="p-4 text-center text-stone-400">
             Nessun capitolo trovato. Clicca sotto per crearne uno.
@@ -84,14 +190,18 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
               <div
                 key={chap.id}
                 onClick={() => !isEditing && onSelectChapter(chap.id)}
-                className={`group p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between ${
+                className={`group p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
                   isActive
                     ? 'border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-sm'
                     : 'border-transparent hover:border-stone-200 dark:hover:border-stone-800 hover:bg-stone-100/70 dark:hover:bg-stone-800/50 text-stone-700 dark:text-stone-300'
                 }`}
               >
                 <div className="flex items-center space-x-2 truncate flex-1 mr-2">
-                  <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-stone-400'}`} />
+                  <FileText
+                    className={`w-3.5 h-3.5 flex-shrink-0 ${
+                      isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-stone-400'
+                    }`}
+                  />
                   {isEditing ? (
                     <input
                       type="text"
@@ -159,15 +269,53 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
         )}
       </div>
 
-      {/* Footer con pulsante Nuovo Capitolo */}
-      <div className="p-3 border-t border-stone-200 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/40">
+      {/* Footer con pulsante Nuovo Capitolo ed Esportazione */}
+      <div className="p-3 border-t border-stone-200 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/40 space-y-2">
         <button
           onClick={onCreateChapter}
-          className="w-full flex items-center justify-center space-x-1.5 py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow-sm transition-colors"
+          className="w-full flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow-sm transition-colors"
         >
           <Plus className="w-4 h-4" />
           <span>Nuovo Capitolo</span>
         </button>
+
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+            className="w-full flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg border border-stone-300 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 text-xs font-medium transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Esporta Manoscritto...</span>
+          </button>
+
+          {isExportMenuOpen && (
+            <div className="absolute bottom-full left-0 right-0 mb-1.5 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl shadow-xl overflow-hidden py-1 z-50 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsExportMenuOpen(false);
+                  onExportManuscript('md');
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 flex items-center justify-between"
+              >
+                <span>Manoscritto Completo (.md)</span>
+                <span className="text-[10px] font-mono text-stone-400">Markdown</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsExportMenuOpen(false);
+                  onExportManuscript('txt');
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300 flex items-center justify-between"
+              >
+                <span>Manoscritto Completo (.txt)</span>
+                <span className="text-[10px] font-mono text-stone-400">Testo puro</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

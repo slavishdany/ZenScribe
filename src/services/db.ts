@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { ProjectProfile } from "../types";
 
 const DATABASE_URL = "sqlite:zenscribe.db";
 
@@ -70,7 +71,6 @@ async function createSchema(db: Database): Promise<void> {
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)`);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)`);
 
-  // embedding: array di numeri serializzato in JSON (NULL finché non viene calcolato)
   await db.execute(
     `CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY NOT NULL,
@@ -79,11 +79,25 @@ async function createSchema(db: Database): Promise<void> {
       embedding TEXT
     )`
   );
+
+  // Tabella profilo del progetto (genere, stile, premessa, voce narrante)
+  await db.execute(
+    `CREATE TABLE IF NOT EXISTS project_profile (
+      id TEXT PRIMARY KEY NOT NULL DEFAULT 'main',
+      title TEXT NOT NULL DEFAULT '',
+      genre TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      style_tone TEXT NOT NULL DEFAULT '',
+      narrative_voice TEXT NOT NULL DEFAULT '',
+      target_audience TEXT NOT NULL DEFAULT '',
+      narrative_notes TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL DEFAULT 0
+    )`
+  );
 }
 
 /**
  * Apre il database (creandolo se manca) e crea le tabelle mancanti.
- * Chiamata una sola volta: le invocazioni successive riusano la stessa connessione.
  */
 export function inizializzaDatabase(): Promise<Database> {
   if (!dbPromise) {
@@ -95,7 +109,6 @@ export function inizializzaDatabase(): Promise<Database> {
       await createSchema(db);
       return db;
     })().catch((err) => {
-      // Permette un nuovo tentativo alla chiamata successiva
       dbPromise = null;
       throw err;
     });
@@ -114,8 +127,86 @@ function parseMetadata(raw: string | null): NodeMetadata {
 }
 
 /**
- * Crea un nodo (personaggio, luogo, ...). Se l'id esiste già ne aggiorna i campi,
- * senza toccare i collegamenti che lo riguardano.
+ * Legge il profilo del progetto corrente (genere, stile, premessa)
+ */
+export async function caricaProfiloProgetto(): Promise<ProjectProfile> {
+  const defaultProfile: ProjectProfile = {
+    title: '',
+    genre: '',
+    description: '',
+    styleTone: '',
+    narrativeVoice: '',
+    targetAudience: '',
+    narrativeNotes: '',
+  };
+
+  try {
+    const db = await inizializzaDatabase();
+    const rows = await db.select<
+      Array<{
+        title: string;
+        genre: string;
+        description: string;
+        style_tone: string;
+        narrative_voice: string;
+        target_audience: string;
+        narrative_notes: string;
+      }>
+    >(
+      `SELECT title, genre, description, style_tone, narrative_voice, target_audience, narrative_notes FROM project_profile WHERE id = 'main'`
+    );
+
+    if (rows && rows.length > 0) {
+      const r = rows[0];
+      return {
+        title: r.title || '',
+        genre: r.genre || '',
+        description: r.description || '',
+        styleTone: r.style_tone || '',
+        narrativeVoice: r.narrative_voice || '',
+        targetAudience: r.target_audience || '',
+        narrativeNotes: r.narrative_notes || '',
+      };
+    }
+  } catch (e) {
+    console.warn('[DB] Errore lettura profilo progetto:', e);
+  }
+
+  return defaultProfile;
+}
+
+/**
+ * Salva o aggiorna il profilo del progetto letterario
+ */
+export async function salvaProfiloProgetto(profile: ProjectProfile): Promise<void> {
+  const db = await inizializzaDatabase();
+  await db.execute(
+    `INSERT INTO project_profile (id, title, genre, description, style_tone, narrative_voice, target_audience, narrative_notes, updated_at)
+     VALUES ('main', $1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       genre = excluded.genre,
+       description = excluded.description,
+       style_tone = excluded.style_tone,
+       narrative_voice = excluded.narrative_voice,
+       target_audience = excluded.target_audience,
+       narrative_notes = excluded.narrative_notes,
+       updated_at = excluded.updated_at`,
+    [
+      profile.title,
+      profile.genre,
+      profile.description,
+      profile.styleTone,
+      profile.narrativeVoice,
+      profile.targetAudience,
+      profile.narrativeNotes,
+      Date.now(),
+    ]
+  );
+}
+
+/**
+ * Crea un nodo (personaggio, luogo, ...).
  */
 export async function creaNodo(
   id: string,
@@ -138,8 +229,7 @@ export async function creaNodo(
 }
 
 /**
- * Crea un collegamento orientato tra due nodi esistenti. Se l'id esiste già ne
- * aggiorna i campi. Fallisce se source_id o target_id non corrispondono a un nodo.
+ * Crea un collegamento orientato tra due nodi esistenti.
  */
 export async function creaCollegamento(
   id: string,
@@ -161,7 +251,6 @@ export async function creaCollegamento(
 
 /**
  * Salva un capitolo: lo inserisce o ne sovrascrive titolo e contenuto.
- * L'embedding esistente non viene toccato.
  */
 export async function salvaCapitolo(id: string, title: string, content: string): Promise<void> {
   const db = await inizializzaDatabase();
@@ -176,7 +265,7 @@ export async function salvaCapitolo(id: string, title: string, content: string):
 }
 
 /**
- * Legge un capitolo salvato. Restituisce null se l'id non esiste.
+ * Legge un capitolo salvato.
  */
 export async function caricaCapitolo(id: string): Promise<{ id: string; title: string; content: string } | null> {
   const db = await inizializzaDatabase();
@@ -238,23 +327,53 @@ export async function eliminaNodo(id: string): Promise<void> {
 }
 
 /**
- * Restituisce una sintesi testuale di tutti i nodi (personaggi/luoghi) da fornire come contesto all'AI
+ * Restituisce una sintesi testuale ricca sia del profilo del progetto (genere, stile, premessa)
+ * che di tutti i nodi (personaggi/luoghi) da fornire come contesto all'AI.
  */
 export async function ottieniContestoNarrativo(): Promise<string> {
+  const sections: string[] = [];
+
+  try {
+    const profile = await caricaProfiloProgetto();
+    const hasProfile = Boolean(
+      profile.title || profile.genre || profile.description || profile.styleTone || profile.narrativeNotes
+    );
+
+    if (hasProfile) {
+      const pLines: string[] = [];
+      pLines.push("=== PROFILO DEL PROGETTO & STILE NARRATIVO ===");
+      if (profile.title) pLines.push(`• Titolo Opera: "${profile.title}"`);
+      if (profile.genre) pLines.push(`• Genere Letterario: ${profile.genre}`);
+      if (profile.description) pLines.push(`• Premessa / Descrizione rapida: ${profile.description}`);
+      if (profile.styleTone) pLines.push(`• Tono & Registro Stilistico: ${profile.styleTone}`);
+      if (profile.narrativeVoice) pLines.push(`• Voce Narrante & POV: ${profile.narrativeVoice}`);
+      if (profile.targetAudience) pLines.push(`• Atmosfera / Target: ${profile.targetAudience}`);
+      if (profile.narrativeNotes) pLines.push(`• Regole del Mondo & Direttive: ${profile.narrativeNotes}`);
+      sections.push(pLines.join("\n"));
+    }
+  } catch (e) {
+    console.warn("[DB] Errore contesto profilo:", e);
+  }
+
   try {
     const mappa = await ottieniMappaConcettuale();
-    if (mappa.nodes.length === 0) return "";
-    return mappa.nodes
-      .map((n) => `• [${n.type.toUpperCase()}] ${n.name}: ${n.description}`)
-      .join("\n");
-  } catch {
-    return "";
+    if (mappa.nodes.length > 0) {
+      const bLines: string[] = [];
+      bLines.push("=== BIBBIA DEL ROMANZO (PERSONAGGI & LUOGHI) ===");
+      for (const n of mappa.nodes) {
+        bLines.push(`• [${n.type.toUpperCase()}] ${n.name}: ${n.description}`);
+      }
+      sections.push(bLines.join("\n"));
+    }
+  } catch (e) {
+    console.warn("[DB] Errore contesto mappa:", e);
   }
+
+  return sections.join("\n\n").trim();
 }
 
 /**
- * Restituisce tutti i nodi e tutti i collegamenti in un unico oggetto,
- * con i metadati già convertiti da JSON.
+ * Restituisce tutti i nodi e collegamenti
  */
 export async function ottieniMappaConcettuale(): Promise<ConceptMap> {
   const db = await inizializzaDatabase();
