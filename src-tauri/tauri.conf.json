@@ -20,9 +20,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "externalBin": [
-      "resources/llamafile-server"
-    ]
+    "targets": "all"
   }
 }

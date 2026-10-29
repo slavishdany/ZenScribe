@@ -1,584 +1,346 @@
-use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
-use std::time::Duration;
-use tauri::{AppHandle, Manager, RunEvent, Runtime, State, WindowEvent};
+pub mod engine;
+pub mod model_manager;
+pub mod project_io;
 
-// ============================================================================
-// Modulo Windows: Job Object per la prevenzione assoluta di processi zombie
-// ============================================================================
-#[cfg(target_os = "windows")]
-mod windows_job {
-    use std::mem;
-    use std::os::windows::io::AsRawHandle;
-    use std::process::Child;
-    use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Manager, Runtime, State};
 
-    type HANDLE = *mut std::ffi::c_void;
-    type BOOL = i32;
+use crate::engine::NativeEngine;
+use crate::model_manager::{
+    download_model_file, get_models_dir, get_preset_models_list, resolve_model_file, scan_local_models,
+    LocalModelInfo, PresetModel,
+};
+use crate::project_io::{
+    html_to_markdown, open_folder_in_system_explorer, pick_folder_dialog, pick_manifest_file_dialog,
+    read_manifest_from_path, sanitize_filename, save_file_dialog, write_full_project_to_directory,
+    ChapterExportDto, ProjectProfileDto, WorldNodeExportDto,
+};
 
-    #[repr(C)]
-    struct IO_COUNTERS {
-        read_operation_count: u64,
-        write_operation_count: u64,
-        other_operation_count: u64,
-        read_transfer_count: u64,
-        write_transfer_count: u64,
-        other_transfer_count: u64,
-    }
-
-    #[repr(C)]
-    struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
-        per_process_user_time_limit: i64,
-        per_job_user_time_limit: i64,
-        limit_flags: u32,
-        minimum_working_set_size: usize,
-        maximum_working_set_size: usize,
-        active_process_limit: u32,
-        affinity: usize,
-        priority_class: u32,
-        scheduling_class: u32,
-    }
-
-    #[repr(C)]
-    struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-        basic_limit_information: JOBOBJECT_BASIC_LIMIT_INFORMATION,
-        io_info: IO_COUNTERS,
-        process_memory_limit: usize,
-        job_memory_limit: usize,
-        peak_process_memory_used: usize,
-        peak_job_memory_used: usize,
-    }
-
-    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
-    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn CreateJobObjectW(lpJobAttributes: *const std::ffi::c_void, lpName: *const u16) -> HANDLE;
-        fn SetInformationJobObject(
-            hJob: HANDLE,
-            JobObjectInformationClass: u32,
-            lpJobObjectInformation: *const std::ffi::c_void,
-            cbJobObjectInformationLength: u32,
-        ) -> BOOL;
-        fn AssignProcessToJobObject(hJob: HANDLE, hProcess: HANDLE) -> BOOL;
-        fn CloseHandle(hObject: HANDLE) -> BOOL;
-    }
-
-    pub struct JobHandle(pub HANDLE);
-
-    unsafe impl Send for JobHandle {}
-    unsafe impl Sync for JobHandle {}
-
-    impl Drop for JobHandle {
-        fn drop(&mut self) {
-            if !self.0.is_null() {
-                unsafe {
-                    CloseHandle(self.0);
-                }
-            }
-        }
-    }
-
-    /// Assegna il processo figlio a un Job Object di Windows con limite KILL_ON_JOB_CLOSE.
-    /// Il kernel Windows garantisce la terminazione del processo figlio nel caso
-    /// in cui il processo genitore termini per qualsiasi motivo (anche crash o chiusura da Task Manager).
-    pub fn assign_process_to_job(child: &Child) -> Option<JobHandle> {
-        unsafe {
-            let job = CreateJobObjectW(ptr::null(), ptr::null());
-            if job.is_null() {
-                eprintln!("[ZenScribe] Impossibile creare il Job Object Windows");
-                return None;
-            }
-
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = mem::zeroed();
-            info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-
-            let success = SetInformationJobObject(
-                job,
-                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
-                &info as *const _ as *const std::ffi::c_void,
-                mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            );
-
-            if success == 0 {
-                eprintln!("[ZenScribe] Errore configurazione Job Object con SetInformationJobObject");
-                CloseHandle(job);
-                return None;
-            }
-
-            let process_handle = child.as_raw_handle() as HANDLE;
-            let assign_success = AssignProcessToJobObject(job, process_handle);
-            if assign_success == 0 {
-                eprintln!("[ZenScribe] Errore nell'assegnazione del processo al Job Object");
-                CloseHandle(job);
-                return None;
-            }
-
-            Some(JobHandle(job))
-        }
-    }
+pub struct AppAiState {
+    pub engine: Arc<NativeEngine>,
+    pub active_download_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
-// ============================================================================
-// Informazioni Modello Locale & Stato
-// ============================================================================
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct LocalModelInfo {
-    pub filename: String,
-    pub display_name: String,
-    pub size_mb: f64,
-    pub is_active: bool,
-}
-
-pub struct LlamaProcess {
-    pub child: Mutex<Option<Child>>,
-    #[cfg(target_os = "windows")]
-    pub job: Mutex<Option<windows_job::JobHandle>>,
-    pub active_model: Mutex<Option<String>>,
-}
-
-impl LlamaProcess {
+impl AppAiState {
     pub fn new() -> Self {
         Self {
-            child: Mutex::new(None),
-            #[cfg(target_os = "windows")]
-            job: Mutex::new(None),
-            active_model: Mutex::new(None),
+            engine: Arc::new(NativeEngine::new()),
+            active_download_cancel: Mutex::new(None),
         }
-    }
-
-    /// Arresta immediatamente e pulisce il processo figlio
-    pub fn stop(&self) {
-        if let Ok(mut lock) = self.child.lock() {
-            if let Some(mut child) = lock.take() {
-                println!("[ZenScribe] Arresto in corso del server Llamafile (PID: {})...", child.id());
-                let _ = child.kill();
-                let _ = child.wait();
-                println!("[ZenScribe] Processo Llamafile terminato.");
-            }
-        }
-        #[cfg(target_os = "windows")]
-        if let Ok(mut job_lock) = self.job.lock() {
-            let _ = job_lock.take();
-        }
-    }
-}
-
-impl Drop for LlamaProcess {
-    fn drop(&mut self) {
-        self.stop();
     }
 }
 
 // ============================================================================
-// Risoluzione percorsi e gestione modelli
+// Comandi Tauri per la Gestione Modelli e Inferenza Nativa
 // ============================================================================
 
-fn get_candidate_resource_dirs<R: Runtime>(app_handle: &AppHandle<R>) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    // 1. Directory risorse ufficiale di Tauri v2 (bundle di produzione)
-    if let Ok(p) = app_handle.path().resource_dir() {
-        dirs.push(p.join("resources"));
-        dirs.push(p);
-    }
-
-    // 2. Directory di lavoro corrente
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join("resources"));
-        dirs.push(cwd.join("src-tauri").join("resources"));
-        if let Some(parent) = cwd.parent() {
-            dirs.push(parent.join("resources"));
-        }
-    }
-
-    // 3. Fallback percorsi relativi comuni
-    dirs.push(PathBuf::from("resources"));
-    dirs.push(PathBuf::from("../resources"));
-    dirs.push(PathBuf::from("src-tauri/resources"));
-
-    // 4. Directory dell'eseguibile compilato
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            dirs.push(exe_dir.join("resources"));
-            dirs.push(exe_dir.to_path_buf());
-            if let Some(p) = exe_dir.parent() {
-                dirs.push(p.join("resources"));
-            }
-        }
-    }
-
-    // 5. Cartella Download dell'utente (comoda per rilevare modelli appena scaricati)
-    #[cfg(target_os = "windows")]
-    if let Ok(userprofile) = std::env::var("USERPROFILE") {
-        let downloads = PathBuf::from(userprofile).join("Downloads");
-        if downloads.exists() {
-            dirs.push(downloads);
-        }
-    }
-
-    dirs
-}
-
-fn format_model_display_name(filename: &str) -> String {
-    let lower = filename.to_lowercase();
-    if lower.contains("meta-llama-3.1-8b") {
-        "Meta Llama 3.1 8B Instruct".to_string()
-    } else if lower.contains("modello-italiano") {
-        "Modello Italiano (Llama 3.2 3B)".to_string()
-    } else if lower.contains("llama-3.2-3b") {
-        "Llama 3.2 3B Instruct".to_string()
-    } else if lower.contains("llama-3.2-1b") {
-        "Llama 3.2 1B Instruct".to_string()
-    } else if lower.contains("qwen3.5-0.8b") || (lower.contains("qwen") && lower.contains("0.8b")) {
-        "Qwen 3.5 0.8B (Ultra Veloce)".to_string()
-    } else if lower.contains("qwen-2.5-1.5b") || (lower.contains("qwen") && lower.contains("1.5b")) {
-        "Qwen 2.5 1.5B (Bilanciato)".to_string()
-    } else {
-        filename
-            .replace(".llamafile.exe", "")
-            .replace(".llamafile", "")
-            .replace(".gguf", "")
-            .replace(".exe", "")
-            .replace("_", " ")
-            .replace("-", " ")
-    }
-}
-
-/// Individua l'eseguibile runner Llamafile (server)
-fn resolve_server_binary<R: Runtime>(app_handle: &AppHandle<R>) -> Option<PathBuf> {
-    let search_dirs = get_candidate_resource_dirs(app_handle);
-    let candidate_names = [
-        "llamafile-server.exe",
-        "llamafile-server-x86_64-pc-windows-msvc.exe",
-        "llamafile.exe",
-        "llamafile-server",
-        "llamafile",
-    ];
-
-    for dir in &search_dirs {
-        for name in &candidate_names {
-            let p = dir.join(name);
-            if p.exists() {
-                if let Ok(meta) = std::fs::metadata(&p) {
-                    if meta.len() > 1024 * 1024 { // Almeno 1MB (non file vuoto)
-                        return Some(p);
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Restituisce la lista di tutti i modelli AI disponibili (esclude i binari runner del server)
-fn scan_available_models<R: Runtime>(app_handle: &AppHandle<R>, active_name: Option<&str>) -> Vec<LocalModelInfo> {
-    let search_dirs = get_candidate_resource_dirs(app_handle);
-    let mut models = Vec::new();
-    let mut seen_filenames = std::collections::HashSet::new();
-
-    for dir in &search_dirs {
-        if !dir.exists() {
-            continue;
-        }
-
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    let lower = file_name.to_lowercase();
-
-                    // Ignora gli eseguibili del runner del server
-                    if lower.starts_with("llamafile-server") || lower == "llamafile.exe" || lower == "llamafile" {
-                        continue;
-                    }
-
-                    let is_model = lower.ends_with(".gguf")
-                        || lower.ends_with(".llamafile")
-                        || lower.ends_with(".llamafile.exe")
-                        || lower.contains("llama")
-                        || lower.contains("qwen")
-                        || lower.contains("modello")
-                        || lower.contains("mistral");
-
-                    if is_model {
-                        if !seen_filenames.contains(file_name) {
-                            if let Ok(meta) = std::fs::metadata(&path) {
-                                if meta.len() > 50 * 1024 * 1024 { // Almeno 50MB per essere un modello AI reale
-                                    seen_filenames.insert(file_name.to_string());
-                                    let is_active = match active_name {
-                                        Some(active) => active == file_name,
-                                        None => false,
-                                    };
-                                    models.push(LocalModelInfo {
-                                        display_name: format_model_display_name(file_name),
-                                        filename: file_name.to_string(),
-                                        size_mb: (meta.len() as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0,
-                                        is_active,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Ordina: prima quello con 'meta' o 'italiano', poi per dimensione o nome
-    models.sort_by(|a, b| {
-        let a_it = a.filename.to_lowercase().contains("meta") || a.filename.to_lowercase().contains("italiano");
-        let b_it = b.filename.to_lowercase().contains("meta") || b.filename.to_lowercase().contains("italiano");
-        if a_it && !b_it {
-            std::cmp::Ordering::Less
-        } else if !a_it && b_it {
-            std::cmp::Ordering::Greater
-        } else {
-            a.filename.cmp(&b.filename)
-        }
-    });
-
-    models
-}
-
-/// Individua il percorso assoluto del modello selezionato o del primo disponibile
-fn resolve_model_path<R: Runtime>(app_handle: &AppHandle<R>, target_filename: Option<&str>) -> Option<(PathBuf, String)> {
-    let search_dirs = get_candidate_resource_dirs(app_handle);
-
-    // 1. Se richiesto un nome specifico
-    if let Some(target) = target_filename {
-        for dir in &search_dirs {
-            let p = dir.join(target);
-            if p.exists() {
-                return Some((p, target.to_string()));
-            }
-            let p_exe = dir.join(format!("{}.exe", target));
-            if p_exe.exists() {
-                return Some((p_exe, format!("{}.exe", target)));
-            }
-        }
-    }
-
-    // 2. Fallback: primo modello disponibile rilevato
-    let available = scan_available_models(app_handle, None);
-    if let Some(first) = available.first() {
-        for dir in &search_dirs {
-            let p = dir.join(&first.filename);
-            if p.exists() {
-                return Some((p, first.filename.clone()));
-            }
-        }
-    }
-
-    None
-}
-
-fn spawn_llamafile_server<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    target_filename: Option<&str>,
-) -> Result<(Child, String), String> {
-    let server_binary = resolve_server_binary(app_handle).ok_or_else(|| {
-        "Nessun eseguibile 'llamafile-server.exe' valido (> 1 MB) trovato in 'resources/'".to_string()
-    })?;
-
-    let maybe_model = resolve_model_path(app_handle, target_filename);
-
-    let chosen_display_name = match &maybe_model {
-        Some((_, name)) => name.clone(),
-        None => "Modello integrato".to_string(),
-    };
-
-    println!("[ZenScribe] Runner Llamafile: {}", server_binary.display());
-    if let Some((ref model_path, _)) = maybe_model {
-        println!("[ZenScribe] Modello caricato: {}", model_path.display());
-    }
-
-    let mut cmd = Command::new(&server_binary);
-
-    // Parametri server OpenAI-compatible:
-    // --server: attiva il server HTTP
-    // --port 8080: porta locale per ZenScribe
-    // --host 127.0.0.1: localhost per totale privacy e sicurezza
-    // -c 4096: contesto
-    // --gpu disable: garantisce stabilità totale su tutti i sistemi Windows evitando crash di VRAM
-    let mut args = vec![
-        "--server".to_string(),
-        "--port".to_string(),
-        "8080".to_string(),
-        "--host".to_string(),
-        "127.0.0.1".to_string(),
-        "-c".to_string(),
-        "4096".to_string(),
-        "--gpu".to_string(),
-        "disable".to_string(),
-    ];
-
-    if let Some((ref model_path, _)) = maybe_model {
-        args.push("-m".to_string());
-        args.push(model_path.to_string_lossy().to_string());
-    }
-
-    cmd.args(&args);
-
-    // Windows: imposta CREATE_NO_WINDOW per eseguire in background senza console nera
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    // Log su file per evitare blocchi e permettere diagnostica
-    let log_dir = app_handle
-        .path()
-        .app_log_dir()
-        .unwrap_or_else(|_| std::env::temp_dir());
-    let _ = std::fs::create_dir_all(&log_dir);
-    let log_path = log_dir.join("llamafile.log");
-    match std::fs::File::create(&log_path).and_then(|f| f.try_clone().map(|c| (f, c))) {
-        Ok((out, err)) => {
-            println!("[ZenScribe] Log del server Llamafile: {}", log_path.display());
-            cmd.stdout(Stdio::from(out));
-            cmd.stderr(Stdio::from(err));
-        }
-        Err(e) => {
-            eprintln!("[ZenScribe] Impossibile creare il log {}: {}", log_path.display(), e);
-            cmd.stdout(Stdio::null());
-            cmd.stderr(Stdio::null());
-        }
-    }
-
-    let child = cmd.spawn().map_err(|e| format!("Impossibile avviare il processo Llamafile: {}", e))?;
-    Ok((child, chosen_display_name))
-}
-
-// ============================================================================
-// Health check del server Llamafile (Porta 8080)
-// ============================================================================
-fn check_llamafile_health(addr_str: &str) -> bool {
-    use std::io::{Read, Write};
-
-    let Ok(addr) = addr_str.parse::<SocketAddr>() else {
-        return false;
-    };
-
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
-        return false;
-    };
-
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(800)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-
-    let request = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nConnection: close\r\n\r\n";
-    if stream.write_all(request).is_err() {
-        return false;
-    }
-
-    let mut response = [0u8; 512];
-    match stream.read(&mut response) {
-        Ok(n) if n > 0 => {
-            let res = String::from_utf8_lossy(&response[..n]);
-            res.contains("200 OK") || res.contains("\"status\":\"ok\"") || res.contains("\"status\": \"ok\"")
-        }
-        _ => false,
-    }
-}
-
-// ============================================================================
-// Comandi Tauri esportati al frontend
-// ============================================================================
-
-/// Verifica se il server locale Llamafile sulla porta 8080 è attivo e pronto a ricevere richieste.
+/// Restituisce l'elenco dei 4 modelli consigliati preconfigurati
 #[tauri::command]
-fn check_server_ready() -> bool {
-    is_server_ready()
+fn get_preset_models() -> Vec<PresetModel> {
+    get_preset_models_list()
 }
 
-/// Alias per compatibilità con differenti convenzioni di invocazione frontend
-#[tauri::command]
-fn is_server_ready() -> bool {
-    check_llamafile_health("127.0.0.1:8080")
-}
-
-/// Restituisce la lista di tutti i modelli Llamafile disponibili in resources/
+/// Restituisce la lista di tutti i modelli disponibili in AppData/models o resources
 #[tauri::command]
 fn get_available_models<R: Runtime>(
     app: AppHandle<R>,
-    state: State<'_, LlamaProcess>,
+    state: State<'_, AppAiState>,
 ) -> Vec<LocalModelInfo> {
-    let active_name = state.active_model.lock().ok().and_then(|guard| guard.clone());
-    scan_available_models(&app, active_name.as_deref())
+    let active = state.engine.get_active_model_name();
+    scan_local_models(&app, active.as_deref())
 }
 
 /// Restituisce il nome del modello attualmente attivo
 #[tauri::command]
-fn get_active_model(state: State<'_, LlamaProcess>) -> Option<String> {
-    state.active_model.lock().ok().and_then(|guard| guard.clone())
+fn get_active_model(state: State<'_, AppAiState>) -> Option<String> {
+    state.engine.get_active_model_name()
 }
 
-/// Cambia a runtime il modello locale attivo riavviando il processo con il nuovo eseguibile
+/// Avvia il download asincrono di un modello da Hugging Face
+#[tauri::command]
+async fn start_download_model<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppAiState>,
+    repo_id: String,
+    filename: String,
+) -> Result<String, String> {
+    println!("[ZenScribe] Richiesta download: repo={}, file={}", repo_id, filename);
+
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    {
+        let mut lock = state.active_download_cancel.lock().map_err(|e| e.to_string())?;
+        *lock = Some(cancel_token.clone());
+    }
+
+    let download_res = download_model_file(app.clone(), repo_id, filename.clone(), cancel_token).await;
+
+    // Reset token di cancellazione
+    if let Ok(mut lock) = state.active_download_cancel.lock() {
+        *lock = None;
+    }
+
+    match download_res {
+        Ok(path_str) => {
+            // Se nessun modello è attualmente attivo, carica automaticamente questo
+            if state.engine.get_active_model_name().is_none() {
+                let model_path = std::path::PathBuf::from(&path_str);
+                let _ = state.engine.load_model(&model_path, &filename);
+            }
+            Ok(path_str)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Annulla un download attualmente in corso
+#[tauri::command]
+fn cancel_download_model(state: State<'_, AppAiState>) -> Result<(), String> {
+    if let Ok(mut lock) = state.active_download_cancel.lock() {
+        if let Some(token) = lock.take() {
+            token.store(true, Ordering::SeqCst);
+            println!("[ZenScribe] Segnale di annullamento download inviato.");
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+/// Elimina un file modello locale dalla cartella dei modelli
+#[tauri::command]
+fn delete_local_model<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppAiState>,
+    model_filename: String,
+) -> Result<(), String> {
+    if let Some(ref active) = state.engine.get_active_model_name() {
+        if active.eq_ignore_ascii_case(&model_filename) {
+            state.engine.unload_model();
+        }
+    }
+
+    let models_dir = get_models_dir(&app);
+    let target = models_dir.join(&model_filename);
+    if target.exists() {
+        std::fs::remove_file(&target)
+            .map_err(|e| format!("Impossibile eliminare il file del modello: {}", e))?;
+    }
+
+    let companion_tok = models_dir.join(format!("{}.tokenizer.json", model_filename));
+    if companion_tok.exists() {
+        let _ = std::fs::remove_file(&companion_tok);
+    }
+
+    Ok(())
+}
+
+/// Cambia a runtime il modello locale attivo caricandolo in memoria
 #[tauri::command]
 fn switch_local_model<R: Runtime>(
     app: AppHandle<R>,
-    state: State<'_, LlamaProcess>,
+    state: State<'_, AppAiState>,
     model_filename: String,
 ) -> Result<LocalModelInfo, String> {
-    println!("[ZenScribe] Cambio modello richiesto: {}", model_filename);
+    println!("[ZenScribe] Cambio modello richiesto verso: {}", model_filename);
 
-    // 1. Arresta il processo precedente
-    state.stop();
+    let model_path = resolve_model_file(&app, &model_filename)
+        .ok_or_else(|| format!("File modello '{}' non trovato sul disco locale.", model_filename))?;
 
-    // 2. Avvia il nuovo modello
-    match spawn_llamafile_server(&app, Some(&model_filename)) {
-        Ok((child, name)) => {
-            #[cfg(target_os = "windows")]
-            {
-                let job = windows_job::assign_process_to_job(&child);
-                *state.job.lock().unwrap() = job;
-            }
-            *state.child.lock().unwrap() = Some(child);
-            *state.active_model.lock().unwrap() = Some(name.clone());
+    state.engine.load_model(&model_path, &model_filename)?;
 
-            let display = format_model_display_name(&name);
-            Ok(LocalModelInfo {
-                filename: name,
-                display_name: display,
-                size_mb: 0.0,
-                is_active: true,
-            })
-        }
-        Err(err) => Err(err),
-    }
+    let (display_name, is_custom) = crate::model_manager::format_model_display_name(&model_filename);
+    let size_mb = std::fs::metadata(&model_path)
+        .map(|m| (m.len() as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0)
+        .unwrap_or(0.0);
+
+    Ok(LocalModelInfo {
+        filename: model_filename,
+        display_name,
+        size_mb,
+        is_active: true,
+        path: model_path.to_string_lossy().to_string(),
+        is_custom,
+    })
 }
 
-/// Comando per forzare il riavvio del server locale attivo
+/// Verifica se il motore nativo AI è pronto con un modello caricato in memoria
+#[tauri::command]
+fn check_server_ready(state: State<'_, AppAiState>) -> bool {
+    state.engine.is_ready()
+}
+
+/// Alias per compatibilità con il frontend esistente
+#[tauri::command]
+fn is_server_ready(state: State<'_, AppAiState>) -> bool {
+    state.engine.is_ready()
+}
+
+/// Alias per forzare il ricaricamento del modello attivo
 #[tauri::command]
 fn restart_llama_server<R: Runtime>(
     app: AppHandle<R>,
-    state: State<'_, LlamaProcess>,
+    state: State<'_, AppAiState>,
 ) -> Result<String, String> {
-    let current = state.active_model.lock().ok().and_then(|guard| guard.clone());
-    state.stop();
-
-    match spawn_llamafile_server(&app, current.as_deref()) {
-        Ok((child, name)) => {
-            let pid = child.id();
-            #[cfg(target_os = "windows")]
-            {
-                let job = windows_job::assign_process_to_job(&child);
-                *state.job.lock().unwrap() = job;
-            }
-            *state.child.lock().unwrap() = Some(child);
-            *state.active_model.lock().unwrap() = Some(name.clone());
-            Ok(format!("Server avviato correttamente con PID: {}", pid))
-        }
-        Err(err) => Err(err),
+    if let Some(active) = state.engine.get_active_model_name() {
+        switch_local_model(app, state, active)?;
+        Ok("Modello riavviato correttamente".to_string())
+    } else {
+        Err("Nessun modello attivo da riavviare".to_string())
     }
+}
+
+/// Comando nativo di inferenza AI locale
+#[tauri::command]
+async fn generate_local_ai(
+    state: State<'_, AppAiState>,
+    prompt: String,
+    system_prompt: Option<String>,
+    temperature: Option<f64>,
+    max_tokens: Option<usize>,
+) -> Result<String, String> {
+    let engine = state.engine.clone();
+    let temp = temperature.unwrap_or(0.3);
+    let max_tok = max_tokens.unwrap_or(1024);
+
+    tokio::task::spawn_blocking(move || {
+        engine.generate(&prompt, system_prompt.as_deref(), max_tok, temp)
+    })
+    .await
+    .map_err(|e| format!("Errore nel task di inferenza: {}", e))?
+}
+
+/// Comando rapido per la correzione bozze e refusi con il motore nativo
+#[tauri::command]
+async fn correct_spelling_local(
+    state: State<'_, AppAiState>,
+    text: String,
+    context: Option<String>,
+) -> Result<String, String> {
+    let system_prompt = match context {
+        Some(ref ctx) => format!(
+            "Sei un correttore bozze esperto per uno scrittore. Ecco il contesto del racconto (personaggi e luoghi):\n{}\n\nCorreggi esclusivamente refusi, ortografia e grammatica mantenendo inalterata la voce dell'autore. Rispondi SOLO con il testo corretto.",
+            ctx
+        ),
+        None => "Sei un editor e correttore di bozze letterario preciso ed essenziale. Rispondi SOLO con il testo corretto, senza commenti.".to_string(),
+    };
+
+    let prompt = format!(
+        "Correggi esclusivamente errori grammaticali, ortografici e refusi nel seguente testo in italiano, mantenendo intatto lo stile, la punteggiatura narrativa e la voce dell'autore. Rispondi SOLO con il testo corretto, senza spiegazioni o premesse.\n\nTesto:\n\"\"\"\n{}\n\"\"\"",
+        text
+    );
+
+    generate_local_ai(state, prompt, Some(system_prompt), Some(0.2), Some(2048)).await
+}
+
+/// Comando rapido per la riformulazione e miglioramento stilistico
+#[tauri::command]
+async fn rephrase_text_local(
+    state: State<'_, AppAiState>,
+    text: String,
+    context: Option<String>,
+) -> Result<String, String> {
+    let system_prompt = match context {
+        Some(ref ctx) => format!(
+            "Sei un assistente di scrittura letteraria. Ecco il contesto del racconto (personaggi e luoghi):\n{}\n\nRiscrivi migliorando fluidità e ritmo preservando i personaggi e il significato.",
+            ctx
+        ),
+        None => "Sei un assistente di scrittura che perfeziona lo stile senza alterare la voce originale.".to_string(),
+    };
+
+    let prompt = format!(
+        "Riscrivi il seguente testo migliorandone la fluidità sintattica e il ritmo espressivo, preservando il significato originale. Rispondi ESCLUSIVAMENTE con la nuova versione.\n\nTesto:\n\"\"\"\n{}\n\"\"\"",
+        text
+    );
+
+    generate_local_ai(state, prompt, Some(system_prompt), Some(0.4), Some(2048)).await
+}
+
+// ============================================================================
+// Comandi per la Gestione File & Struttura del Progetto su Disco
+// ============================================================================
+
+/// Apre la finestra di dialogo nativa per selezionare una cartella di progetto sul computer
+#[tauri::command]
+async fn select_project_folder() -> Result<Option<String>, String> {
+    Ok(pick_folder_dialog().await)
+}
+
+/// Apre una cartella nel file explorer nativo di sistema (Windows Explorer)
+#[tauri::command]
+fn open_folder_in_explorer(folder_path: String) -> Result<(), String> {
+    open_folder_in_system_explorer(&folder_path)
+}
+
+/// Esporta il capitolo corrente su file tramite dialogo Salva con Nome
+#[tauri::command]
+async fn export_chapter_file(
+    title: String,
+    content: String,
+    format: Option<String>,
+) -> Result<Option<String>, String> {
+    let ext = format.unwrap_or_else(|| "md".to_string());
+    let default_name = format!("{}.{}", sanitize_filename(&title), ext);
+    if let Some(path) = save_file_dialog(&default_name, &ext).await {
+        let text_content = if ext == "txt" {
+            html_to_markdown(&content)
+        } else {
+            format!("# {}\n\n{}", title, html_to_markdown(&content))
+        };
+        std::fs::write(&path, text_content).map_err(|e| format!("Errore scrittura file: {}", e))?;
+        Ok(Some(path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Esporta il manoscritto completo unificato con tutti i capitoli
+#[tauri::command]
+async fn export_full_manuscript(
+    title: String,
+    chapters: Vec<ChapterExportDto>,
+    format: Option<String>,
+) -> Result<Option<String>, String> {
+    let ext = format.unwrap_or_else(|| "md".to_string());
+    let default_name = format!("{}_Completo.{}", sanitize_filename(&title), ext);
+    if let Some(path) = save_file_dialog(&default_name, &ext).await {
+        let mut manuscript = String::new();
+        manuscript.push_str(&format!("# {}\n\n---\n\n", title));
+        for ch in chapters {
+            manuscript.push_str(&format!(
+                "## {}\n\n{}\n\n---\n\n",
+                ch.title,
+                html_to_markdown(&ch.content)
+            ));
+        }
+        std::fs::write(&path, manuscript).map_err(|e| format!("Errore scrittura manoscritto: {}", e))?;
+        Ok(Some(path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Sincronizza l'intero progetto su una cartella fisica strutturata con indice manifest
+#[tauri::command]
+fn sync_project_to_folder(
+    folder_path: String,
+    manifest_json: String,
+    project: ProjectProfileDto,
+    chapters: Vec<ChapterExportDto>,
+    nodes: Vec<WorldNodeExportDto>,
+) -> Result<String, String> {
+    write_full_project_to_directory(&folder_path, &manifest_json, project, chapters, nodes)
+}
+
+/// Apre la finestra di dialogo nativa per selezionare un file manifest (.json)
+#[tauri::command]
+async fn select_manifest_file() -> Result<Option<String>, String> {
+    Ok(pick_manifest_file_dialog().await)
+}
+
+/// Legge il contenuto JSON di un indice manifest da un file o da una cartella
+#[tauri::command]
+fn read_manifest_file(path: String) -> Result<String, String> {
+    read_manifest_from_path(&path)
 }
 
 // ============================================================================
@@ -586,61 +348,56 @@ fn restart_llama_server<R: Runtime>(
 // ============================================================================
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let app_ai_state = AppAiState::new();
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .manage(LlamaProcess::new())
+        .manage(app_ai_state)
         .setup(|app| {
-            let state = app.state::<LlamaProcess>();
-            match spawn_llamafile_server(app.handle(), None) {
-                Ok((child, chosen_name)) => {
-                    let pid = child.id();
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let state = app_handle.state::<AppAiState>();
+                let available = scan_local_models(&app_handle, None);
+                if let Some(first) = available.first() {
                     println!(
-                        "[ZenScribe] Server Llamafile avviato con successo (PID: {}, Modello: {})",
-                        pid, chosen_name
+                        "[ZenScribe] Trovato modello locale disponibile: {}. Caricamento automatico...",
+                        first.filename
                     );
-
-                    #[cfg(target_os = "windows")]
-                    {
-                        let job = windows_job::assign_process_to_job(&child);
-                        if job.is_some() {
-                            println!("[ZenScribe] Processo associato al Job Object Windows (Kill-on-Close attivo)");
+                    if let Some(path) = resolve_model_file(&app_handle, &first.filename) {
+                        if let Err(e) = state.engine.load_model(&path, &first.filename) {
+                            eprintln!("[ZenScribe] Errore precaricamento modello iniziale: {}", e);
                         }
-                        *state.job.lock().unwrap() = job;
                     }
-
-                    *state.child.lock().unwrap() = Some(child);
-                    *state.active_model.lock().unwrap() = Some(chosen_name);
+                } else {
+                    println!("[ZenScribe] Nessun modello locale presente in cache. L'utente potrà scaricarlo dai preset.");
                 }
-                Err(err) => {
-                    eprintln!("[ZenScribe] Avviso avvio motore locale: {}", err);
-                    eprintln!("[ZenScribe] L'interfaccia sarà avviata normalmente.");
-                }
-            }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            check_server_ready,
-            is_server_ready,
+            get_preset_models,
             get_available_models,
             get_active_model,
+            start_download_model,
+            cancel_download_model,
+            delete_local_model,
             switch_local_model,
-            restart_llama_server
+            check_server_ready,
+            is_server_ready,
+            restart_llama_server,
+            generate_local_ai,
+            correct_spelling_local,
+            rephrase_text_local,
+            select_project_folder,
+            select_manifest_file,
+            read_manifest_file,
+            open_folder_in_explorer,
+            export_chapter_file,
+            export_full_manuscript,
+            sync_project_to_folder
         ])
-        .on_window_event(|window, event| {
-            if let WindowEvent::Destroyed = event {
-                println!("[ZenScribe] Finestra chiusa/distrutta, arresto del server AI locale...");
-                let state = window.state::<LlamaProcess>();
-                state.stop();
-            }
-        })
         .build(tauri::generate_context!())
         .expect("Errore durante l'inizializzazione dell'applicazione Tauri");
 
-    app.run(|app_handle, event| {
-        if let RunEvent::ExitRequested { .. } | RunEvent::Exit = event {
-            println!("[ZenScribe] Chiusura applicazione richiesta, pulizia processi...");
-            let state = app_handle.state::<LlamaProcess>();
-            state.stop();
-        }
-    });
+    app.run(|_app_handle, _event| {});
 }
