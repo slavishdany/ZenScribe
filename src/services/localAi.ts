@@ -1,11 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { LocalModelInfo } from "../types";
-
-const LOCAL_SERVER_URL = "http://127.0.0.1:8080";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { LocalModelInfo, PresetModel, DownloadProgress } from "../types";
 
 /**
- * Interroga il backend Tauri (o direttamente la porta locale via HTTP se eseguito in browser)
- * per verificare se il server Llamafile è pronto
+ * Interroga il backend Tauri per verificare se il motore AI nativo è pronto e ha un modello caricato
  */
 export async function checkLocalServerStatus(): Promise<boolean> {
   try {
@@ -13,25 +11,70 @@ export async function checkLocalServerStatus(): Promise<boolean> {
       return await invoke<boolean>("check_server_ready");
     }
   } catch (err) {
-    // Non siamo in ambiente Tauri o il bridge non è ancora pronto
+    // Non siamo in ambiente desktop o il bridge Tauri non è ancora inizializzato
   }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 600);
-    const res = await fetch(`${LOCAL_SERVER_URL}/health`, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return res.ok;
-  } catch (e) {
-    return false;
-  }
+  return false;
 }
 
 /**
- * Recupera la lista dei modelli Llamafile eseguibili presenti in resources/
+ * Recupera l'elenco dei 4 modelli preset ufficiali
+ */
+export async function fetchPresetModels(): Promise<PresetModel[]> {
+  try {
+    if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+      return await invoke<PresetModel[]>("get_preset_models");
+    }
+  } catch (err) {
+    console.warn("[LocalAI] Errore recupero preset modelli:", err);
+  }
+
+  // Fallback con i 4 modelli specificati nei requisiti
+  return [
+    {
+      id: "llama-3.2-3b",
+      name: "Llama 3.2 3B",
+      badge: "Consigliato - Veloce",
+      description: "Circa 2.0 GB. Ottimo per PC standard, basso consumo di RAM.",
+      repo_id: "bartowski/Llama-3.2-3B-Instruct-GGUF",
+      filename: "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      size_label: "2.02 GB",
+      approx_bytes: 2170000000,
+    },
+    {
+      id: "gemma-2-2b",
+      name: "Gemma 2 2B",
+      badge: "Leggerissimo",
+      description: "Circa 1.6 GB. Ideale per computer datati o laptop.",
+      repo_id: "bartowski/gemma-2-2b-it-GGUF",
+      filename: "gemma-2-2b-it-Q4_K_M.gguf",
+      size_label: "1.75 GB",
+      approx_bytes: 1880000000,
+    },
+    {
+      id: "mistral-7b-v0.3",
+      name: "Mistral 7B v0.3",
+      badge: "Bilanciato - Alta qualità",
+      description: "Circa 4.4 GB. Più intelligente, richiede configurazioni moderne (almeno 16GB RAM).",
+      repo_id: "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
+      filename: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+      size_label: "4.37 GB",
+      approx_bytes: 4690000000,
+    },
+    {
+      id: "phi-3-medium",
+      name: "Phi-3 Medium",
+      badge: "Avanzato - Logica",
+      description: "Circa 7.9 GB. Consigliato per compiti complessi e PC dotati di GPU dedicata.",
+      repo_id: "bartowski/Phi-3-medium-4k-instruct-GGUF",
+      filename: "Phi-3-medium-4k-instruct-Q4_K_M.gguf",
+      size_label: "7.90 GB",
+      approx_bytes: 8480000000,
+    },
+  ];
+}
+
+/**
+ * Recupera la lista di tutti i modelli disponibili sul disco locale
  */
 export async function fetchAvailableModels(): Promise<LocalModelInfo[]> {
   try {
@@ -42,25 +85,11 @@ export async function fetchAvailableModels(): Promise<LocalModelInfo[]> {
     console.warn("[LocalAI] Errore recupero modelli disponibili:", err);
   }
 
-  // Fallback se in browser web
-  return [
-    {
-      filename: "modello-italiano.llamafile.exe",
-      display_name: "Modello Italiano (Llama 3.2 3B)",
-      size_mb: 1961.5,
-      is_active: true,
-    },
-    {
-      filename: "Qwen3.5-0.8B-Q8_0.llamafile.exe",
-      display_name: "Qwen 3.5 0.8B (Ultra Veloce)",
-      size_mb: 1172.6,
-      is_active: false,
-    },
-  ];
+  return [];
 }
 
 /**
- * Recupera il nome del modello attualmente attivo
+ * Recupera il nome del modello attualmente attivo in memoria
  */
 export async function fetchActiveModel(): Promise<string | null> {
   try {
@@ -74,91 +103,73 @@ export async function fetchActiveModel(): Promise<string | null> {
 }
 
 /**
- * Cambia il modello locale a runtime, riavviando il processo con il nuovo eseguibile
+ * Avvia il download asincrono di un modello da Hugging Face
+ */
+export async function startModelDownload(repoId: string, filename: string): Promise<string> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string>("start_download_model", { repoId, filename });
+  }
+  throw new Error("Il download dei modelli richiede l'applicazione desktop ZenScribe.");
+}
+
+/**
+ * Annulla il download in corso
+ */
+export async function cancelModelDownload(): Promise<void> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    await invoke("cancel_download_model");
+  }
+}
+
+/**
+ * Elimina un file modello locale
+ */
+export async function deleteLocalModel(modelFilename: string): Promise<void> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    await invoke("delete_local_model", { modelFilename });
+  }
+}
+
+/**
+ * Cambia il modello locale a runtime caricandolo nella memoria del motore nativo
  */
 export async function switchLocalModel(modelFilename: string): Promise<LocalModelInfo> {
   if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
     return await invoke<LocalModelInfo>("switch_local_model", { modelFilename });
   }
-  throw new Error("Il cambio runtime del modello richiede l'applicazione desktop Tauri.");
+  throw new Error("Il caricamento del modello richiede l'applicazione desktop ZenScribe.");
 }
 
 /**
- * Rimuove i token speciali (es. <|eot_id|>) e le frasi introduttive tipo
- * "La correzione è:" che i modelli piccoli aggiungono nonostante il prompt
+ * Si iscrive agli eventi di avanzamento download emessi in tempo reale dal backend Rust
  */
-function cleanModelOutput(raw: string): string {
-  return raw
-    .replace(/<\|[^|>]*\|>/g, "")
-    .replace(/^\s*(?:ecco[^:\n]{0,60}|la correzione è|il testo corretto è|testo corretto|versione corretta|nuova versione)\s*:\s*/i, "")
-    .trim();
+export async function listenDownloadProgress(
+  callback: (progress: DownloadProgress) => void
+): Promise<UnlistenFn> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await listen<DownloadProgress>("model-download-progress", (event) => {
+      callback(event.payload);
+    });
+  }
+  return () => {};
 }
 
 /**
- * Invia una richiesta di correzione ortografica/grammaticale al modello locale
+ * Invia una richiesta di correzione bozze ed errori al motore AI nativo in Rust
  */
 export async function correctSpellingLocal(text: string, context?: string): Promise<string> {
-  const systemPrompt = context
-    ? `Sei un correttore bozze esperto per uno scrittore. Ecco il contesto del racconto (personaggi e luoghi):\n${context}\n\nCorreggi esclusivamente refusi, ortografia e grammatica mantenendo inalterata la voce dell'autore. Rispondi SOLO con il testo corretto.`
-    : "Sei un editor e correttore di bozze letterario preciso ed essenziale. Rispondi SOLO con il testo corretto, senza commenti.";
-
-  const prompt = `Correggi esclusivamente errori grammaticali, ortografici e refusi nel seguente testo in italiano, mantenendo intatto lo stile, la punteggiatura narrativa e la voce dell'autore. Rispondi SOLO con il testo corretto, senza spiegazioni o premesse.\n\nTesto:\n"""\n${text}\n"""`;
-
-  const response = await fetch(`${LOCAL_SERVER_URL}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "default",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.2,
-      max_tokens: 2048,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Errore dal server locale: ${response.statusText}`);
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string>("correct_spelling_local", { text, context: context || null });
   }
-
-  const data = await response.json();
-  const content = cleanModelOutput(data.choices?.[0]?.message?.content ?? "");
-  return content || text;
+  throw new Error("Il motore AI nativo richiede l'ambiente desktop ZenScribe.");
 }
 
 /**
- * Riformula o migliora la fluidità del testo localmente
+ * Riformula o migliora la fluidità del testo con il motore AI nativo in Rust
  */
 export async function rephraseTextLocal(text: string, context?: string): Promise<string> {
-  const systemPrompt = context
-    ? `Sei un assistente di scrittura letteraria. Ecco il contesto del racconto (personaggi e luoghi):\n${context}\n\nRiscrivi migliorando fluidità e ritmo preservando i personaggi e il significato.`
-    : "Sei un assistente di scrittura che perfeziona lo stile senza alterare la voce originale.";
-
-  const prompt = `Riscrivi il seguente testo migliorandone la fluidità sintattica e il ritmo espressivo, preservando il significato originale. Rispondi ESCLUSIVAMENTE con la nuova versione.\n\nTesto:\n"""\n${text}\n"""`;
-
-  const response = await fetch(`${LOCAL_SERVER_URL}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "default",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.4,
-      max_tokens: 2048,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Errore dal server locale: ${response.statusText}`);
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string>("rephrase_text_local", { text, context: context || null });
   }
-
-  const data = await response.json();
-  return cleanModelOutput(data.choices?.[0]?.message?.content ?? "") || text;
+  throw new Error("Il motore AI nativo richiede l'ambiente desktop ZenScribe.");
 }

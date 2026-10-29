@@ -2,7 +2,7 @@
 
 > **Un ambiente di videoscrittura minimale, privato e ibrido (Locale + Cloud) progettato per scrittori e narratori.**
 
-ZenScribe nasce per eliminare ogni distrazione visiva e restituire al pensiero lo spazio che merita. Combina un'esperienza di stesura immersiva con una doppia intelligenza artificiale: un **motore locale standalone al 100% privato** per la correzione e lo stile, e la potenza di **Google Gemini** per lo sviluppo creativo e la generazione di trame complesse basate sulle schede del tuo mondo narrativo.
+ZenScribe nasce per eliminare ogni distrazione visiva e restituire al pensiero lo spazio che merita. Combina un'esperienza di stesura immersiva con una doppia intelligenza artificiale: un **motore locale nativo integrato in Rust al 100% privato** per la correzione bozze e lo stile (con download dinamico dei modelli GGUF), e la potenza di **Google Gemini** per lo sviluppo creativo e la generazione di trame complesse basate sulle schede del tuo mondo narrativo.
 
 ---
 
@@ -19,10 +19,16 @@ ZenScribe nasce per eliminare ogni distrazione visiva e restituire al pensiero l
 
 ### 🛡️ 2. Intelligenza Artificiale Ibrida: Privacy & Creatività
 
-#### 🔒 Fase 1: Motore Locale Standalone (Gratuito, Offline & Privato)
-- **Correzione Bozze & Refusi**: corregge grammatica e punteggiatura senza alterare la voce originale dell'autore.
-- **Riformulazione & Fluidità**: alleggerisce la sintassi e migliora il ritmo narrativo.
-- **100% Standalone**: nessun software esterno da configurare o avviare (zero Ollama, zero server di terze parti). ZenScribe gestisce direttamente il processo in background in modo sicuro e invisibile (grazie al *Job Object Windows Kill-on-Close*).
+#### 🔒 Fase 1: Motore Locale Nativo (.gguf) — Gratuito, Offline & Privato
+- **Download Dinamico & One-Click**: seleziona e scarica qualsiasi modello direttamente dall'interfaccia grafica con barra di avanzamento e velocità in tempo reale.
+- **Preset Ottimizzati Inclusi**:
+  - *Llama 3.2 3B (Consigliato - Veloce)*: ~2.0 GB, basso consumo di RAM.
+  - *Gemma 2 2B (Leggerissimo)*: ~1.6 GB, ideale per laptop e PC datati.
+  - *Mistral 7B v0.3 (Bilanciato - Alta qualità)*: ~4.4 GB, per configurazioni moderne (almeno 16GB RAM).
+  - *Phi-3 Medium (Avanzato - Logica)*: ~7.9 GB, per compiti complessi e GPU dedicate.
+- **Opzione Personalizzata**: puoi scaricare qualsiasi modello `.gguf` presente su Hugging Face inserendo semplicemente Repository ID e Nome File.
+- **Motore Nativo Rust (Zero Sidecar)**: i pesi quantizzati vengono eseguiti nativamente in memoria nel codice Rust tramite la libreria Candle di Hugging Face, eliminando del tutto file binari esterni separati (es. `llamafile-server`) e qualsiasi processo zombie in background.
+- **Smart Caching**: i modelli scaricati vengono archiviati nella cartella protetta locale (`AppData` su Windows). Se il modello è già presente, il download viene saltato e l'attivazione è istantanea.
 - **Zero fuga di dati**: i tuoi testi non lasciano mai il computer.
 
 #### ☁️ Fase 2: Cloud Creativo (Google Gemini)
@@ -50,22 +56,22 @@ Tutti i dati risiedono in un database SQLite locale integrato tramite `tauri-plu
 - **Editor Rich-Text**: [TipTap](https://tiptap.dev/) (ProseMirror engine)
 - **Stili & UI**: [Tailwind CSS](https://tailwindcss.com/), [Lucide React](https://lucide.dev/)
 - **Database Locale**: SQLite tramite `@tauri-apps/plugin-sql`
-- **Motore AI Locale**: [Llamafile](https://github.com/mozilla-ai/llamafile) (OpenAI-compatible server standalone)
+- **Motore AI Locale**: [Candle](https://github.com/huggingface/candle) (Inference engine nativo in Rust per modelli quantizzati GGUF)
 - **Cloud AI SDK**: `@google/generative-ai`
 
 ---
 
-## 🚀 Prerequisiti e Installazione
+## 🚀 Prerequisiti e Avvio
 
 ### Prerequisiti di Sistema
 - **Node.js** (versione 18 o superiore)
-- **Rust & Cargo** (necessari per compilare l'harness Tauri): [rustup.rs](https://rustup.rs/)
-- **Microsoft C++ Build Tools** (su Windows)
+- **Rust & Cargo** (versione 1.75+): [rustup.rs](https://rustup.rs/)
 
-### 1. Clona il Repository
+### 1. Clona il Repository e seleziona il branch
 ```bash
 git clone https://github.com/slavishdany/ZenScribe.git
 cd ZenScribe
+git checkout develop
 ```
 
 ### 2. Installa le Dipendenze
@@ -73,21 +79,13 @@ cd ZenScribe
 npm install
 ```
 
-### 3. Configura il Modello Locale (Standalone)
-ZenScribe supporta modelli in formato **Llamafile** o pesi **GGUF** (es. *Meta Llama 3.1 8B*, *Llama 3.2 3B/1B*, *Qwen 2.5 1.5B*).
-
-1. Inserisci il binario runner `llamafile-server.exe` nella cartella `resources/`.
-2. Posiziona il tuo modello (es. `Meta-Llama-3.1-8B-Instruct.Q4_K_M.llamafile` o qualsiasi file `.gguf`) all'interno di `resources/` (o nella tua cartella *Download*).
-3. All'avvio, ZenScribe rileverà automaticamente il modello e avvierà il motore in background su `127.0.0.1:8080`.
-
-*(Nota: su Windows, i singoli eseguibili `.exe` non possono superare i 4 GB a causa dei limiti del loader PE di sistema. ZenScribe risolve il problema eseguendo `llamafile-server.exe` e passandogli il file del modello tramite il parametro `-m`, permettendo l'uso di modelli di qualsiasi dimensione).*
-
-### 4. Avvia in Modalità Sviluppo
+### 3. Avvia in Modalità Sviluppo
 ```bash
 npm run tauri dev
 ```
+All'avvio, apri il menu Impostazioni (icona in basso o in alto) per selezionare e scaricare in un click il modello AI locale desiderato tra i 4 preset suggeriti o inserire un modello personalizzato.
 
-### 5. Compila l'Eseguibile per la Produzione
+### 4. Compila l'Eseguibile per la Produzione
 ```bash
 npm run tauri build
 ```
@@ -98,24 +96,5 @@ L'eseguibile compilato e il programma di installazione si troveranno in `src-tau
 ## 🔑 Configurazione Gemini API (Opzionale per il Cloud)
 
 1. Ottieni gratuitamente una chiave API su [Google AI Studio](https://aistudio.google.com/app/apikey).
-2. All'interno di ZenScribe, apri le **Impostazioni** (icona ingranaggio in basso a destra).
-3. Incolla la tua chiave nel campo *Gemini API Key* e clicca su **Salva Impostazioni**.
-4. La chiave è archiviata unicamente nel localStorage del tuo dispositivo e non viene mai inviata a server intermediari.
-
----
-
-## ⌨️ Scorciatoie da Tastiera Rapide
-
-| Tasti | Azione |
-| :--- | :--- |
-| <kbd>Ctrl</kbd> + <kbd>J</kbd> | Apri Assistente AI per il testo selezionato |
-| <kbd>Ctrl</kbd> + <kbd>Z</kbd> | Annulla ultima modifica |
-| <kbd>Ctrl</kbd> + <kbd>Y</kbd> | Ripristina modifica |
-| <kbd>Ctrl</kbd> + <kbd>B</kbd> | Grassetto |
-| <kbd>Ctrl</kbd> + <kbd>I</kbd> | Corsivo |
-
----
-
-## 📄 Licenza
-
-Distribuito sotto licenza **MIT**. Consulta il file `LICENSE` per ulteriori dettagli.
+2. Apri le **Impostazioni** di ZenScribe (icona ingranaggio nella barra di stato in basso).
+3. Incolla la chiave nella sezione *Google Gemini (Cloud)* e salva.

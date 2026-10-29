@@ -1,11 +1,35 @@
 export type EditorFont = 'serif' | 'sans' | 'mono';
 export type EditorWidth = 'narrow' | 'medium' | 'wide' | 'full';
 
+export interface PresetModel {
+  id: string;
+  name: string;
+  badge: string;
+  description: string;
+  repo_id: string;
+  filename: string;
+  size_label: string;
+  approx_bytes: number;
+}
+
 export interface LocalModelInfo {
   filename: string;
   display_name: string;
   size_mb: number;
   is_active: boolean;
+  path?: string;
+  is_custom?: boolean;
+}
+
+export interface DownloadProgress {
+  repo_id: string;
+  filename: string;
+  downloaded_bytes: number;
+  total_bytes: number;
+  percentage: number;
+  speed_mbps: number;
+  status: 'downloading' | 'completed' | 'error' | 'cached' | 'cancelled';
+  error?: string;
 }
 
 export interface EditorSettings {

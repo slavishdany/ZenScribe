@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Cpu, Check, Copy, ArrowRight, Loader2, X, RefreshCw } from 'lucide-react';
+import { Sparkles, Cpu, Check, Copy, ArrowRight, Loader2, X } from 'lucide-react';
 import { correctSpellingLocal, rephraseTextLocal } from '../services/localAi';
 import { continueWritingCreative, expandConceptCreative, generatePlotFromBible } from '../services/geminiAi';
 import { ottieniContestoNarrativo } from '../services/db';
@@ -62,12 +62,12 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 
       if (actionType === 'spellcheck') {
         if (!serverStatus.isReady) {
-          throw new Error("Il server locale Llamafile non è attivo sulla porta 8080. Verifica che 'llamafile-server.exe' sia in resources/.");
+          throw new Error("Nessun modello AI locale attivo in memoria. Apri le impostazioni e scarica o attiva un modello .gguf.");
         }
         output = await correctSpellingLocal(inputText, context);
       } else if (actionType === 'rephrase') {
         if (!serverStatus.isReady) {
-          throw new Error("Il server locale Llamafile non è attivo sulla porta 8080.");
+          throw new Error("Nessun modello AI locale attivo in memoria. Apri le impostazioni e attiva un modello.");
         }
         output = await rephraseTextLocal(inputText, context);
       } else if (actionType === 'continue') {
@@ -106,6 +106,18 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     }
   };
 
+  const modelBadge = activeModelName
+    ? activeModelName.toLowerCase().includes("llama-3.2-3b")
+      ? "Llama 3.2 3B"
+      : activeModelName.toLowerCase().includes("gemma-2-2b")
+      ? "Gemma 2 2B"
+      : activeModelName.toLowerCase().includes("mistral-7b")
+      ? "Mistral 7B"
+      : activeModelName.toLowerCase().includes("phi-3")
+      ? "Phi-3 Medium"
+      : "Attivo"
+    : "Offline";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
@@ -142,17 +154,21 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 
           {/* Bottoni Azioni Rapide */}
           <div className="grid grid-cols-2 gap-2">
-            {/* Azioni Locali (Llamafile) */}
+            {/* Azioni Locali (Nativo Rust) */}
             <div className="p-3 bg-stone-100/60 dark:bg-stone-800/40 rounded-lg space-y-2 border border-stone-200/60 dark:border-stone-700/40">
               <div className="flex items-center justify-between text-xs font-semibold text-stone-700 dark:text-stone-300">
                 <span className="flex items-center space-x-1.5">
                   <Cpu className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                   <span>Fase 1: Locale & Privato</span>
                 </span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                  serverStatus.isReady ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 font-medium' : 'bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-400'
-                }`}>
-                  {serverStatus.isReady ? (activeModelName ? (activeModelName.toLowerCase().includes("italiano") ? "Llama 3.2 3B" : "Qwen 0.8B") : "Attivo") : 'Offline'}
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    serverStatus.isReady
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400'
+                      : 'bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-400'
+                  }`}
+                >
+                  {serverStatus.isReady ? modelBadge : 'Offline'}
                 </span>
               </div>
               <div className="space-y-1.5">
@@ -219,14 +235,12 @@ export const AIPanel: React.FC<AIPanelProps> = ({
           {errorMessage && (
             <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between">
               <span>{errorMessage}</span>
-              {!geminiApiKey && (
-                <button
-                  onClick={onOpenSettings}
-                  className="font-semibold underline ml-2 hover:text-rose-900"
-                >
-                  Configura API Key
-                </button>
-              )}
+              <button
+                onClick={onOpenSettings}
+                className="font-semibold underline ml-2 hover:text-rose-900"
+              >
+                Impostazioni
+              </button>
             </div>
           )}
 
