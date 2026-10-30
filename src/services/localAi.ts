@@ -173,3 +173,23 @@ export async function rephraseTextLocal(text: string, context?: string): Promise
   }
   throw new Error("Il motore AI nativo richiede l'ambiente desktop ZenScribe.");
 }
+
+/**
+ * Invia una richiesta generica di generazione o analisi testuale al motore AI nativo locale (Candle GGUF)
+ */
+export async function generateLocalAI(
+  prompt: string,
+  systemPrompt?: string,
+  temperature = 0.3,
+  maxTokens = 2048
+): Promise<string> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string>("generate_local_ai", {
+      prompt,
+      systemPrompt: systemPrompt || null,
+      temperature,
+      maxTokens,
+    });
+  }
+  throw new Error("Il motore AI nativo richiede l'ambiente desktop ZenScribe.");
+}

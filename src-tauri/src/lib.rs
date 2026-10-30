@@ -12,7 +12,7 @@ use crate::model_manager::{
     LocalModelInfo, PresetModel,
 };
 use crate::project_io::{
-    html_to_markdown, open_folder_in_system_explorer, pick_folder_dialog, pick_manifest_file_dialog,
+    html_to_markdown, open_folder_in_system_explorer, pick_folder_dialog, pick_manifest_file_dialog, pick_import_file_dialog, read_text_file_from_path,
     read_manifest_from_path, sanitize_filename, save_file_dialog, write_full_project_to_directory,
     ChapterExportDto, ProjectProfileDto, WorldNodeExportDto,
 };
@@ -337,6 +337,18 @@ async fn select_manifest_file() -> Result<Option<String>, String> {
     Ok(pick_manifest_file_dialog().await)
 }
 
+/// Apre la finestra di dialogo nativa per selezionare un file di trama, testo (.txt, .md) o manifest (.json)
+#[tauri::command]
+async fn select_import_file() -> Result<Option<String>, String> {
+    Ok(pick_import_file_dialog().await)
+}
+
+/// Legge il contenuto testuale di qualsiasi file da percorso specificato sul disco
+#[tauri::command]
+fn read_text_file_content(path: String) -> Result<String, String> {
+    read_text_file_from_path(&path)
+}
+
 /// Legge il contenuto JSON di un indice manifest da un file o da una cartella
 #[tauri::command]
 fn read_manifest_file(path: String) -> Result<String, String> {
@@ -391,6 +403,8 @@ pub fn run() {
             select_project_folder,
             select_manifest_file,
             read_manifest_file,
+            select_import_file,
+            read_text_file_content,
             open_folder_in_explorer,
             export_chapter_file,
             export_full_manuscript,

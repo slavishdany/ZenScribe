@@ -85,6 +85,26 @@ export async function readManifestFile(path: string): Promise<string> {
 }
 
 /**
+ * Apre la finestra di dialogo nativa per selezionare qualsiasi file di trama, testo (.txt, .md) o backup (.json)
+ */
+export async function selectImportFile(): Promise<string | null> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string | null>("select_import_file");
+  }
+  return null;
+}
+
+/**
+ * Legge il contenuto testuale di qualsiasi file da percorso specificato sul disco
+ */
+export async function readTextFileContent(path: string): Promise<string> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return await invoke<string>("read_text_file_content", { path });
+  }
+  throw new Error("La lettura del file richiede l'ambiente desktop ZenScribe.");
+}
+
+/**
  * Sincronizza ed esporta l'intero progetto su una cartella fisica con indice zenscribe.manifest.json, Capitoli/, Bibbia/ e Manoscritto/
  */
 export async function syncProjectToFolder(

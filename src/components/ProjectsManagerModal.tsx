@@ -17,6 +17,9 @@ import {
   Sliders,
   Calendar,
   CheckCircle2,
+  Cpu,
+  Users,
+  Layers,
 } from 'lucide-react';
 import { ProjectItem, ProjectProfile, ProjectManifest } from '../types';
 import {
@@ -35,7 +38,16 @@ import {
   selectManifestFile,
   readManifestFile,
   openFolderInExplorer,
+  selectImportFile,
+  readTextFileContent,
 } from '../services/projectFiles';
+import { checkLocalServerStatus } from '../services/localAi';
+import {
+  parseStoryText,
+  enhanceStoryWithLocalAI,
+  importParsedStoryToDatabase,
+  ParsedStory,
+} from '../services/storyImporter';
 
 interface ProjectsManagerModalProps {
   isOpen: boolean;
@@ -111,6 +123,12 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
+  // Importazione da File di Testo / Trama con AI Locale
+  const [storyParsed, setStoryParsed] = useState<ParsedStory | null>(null);
+  const [storyRawText, setStoryRawText] = useState<string | null>(null);
+  const [isLocalAiReady, setIsLocalAiReady] = useState(false);
+  const [isAnalyzingAi, setIsAnalyzingAi] = useState(false);
+
   // Caricamento progetti all'apertura
   const refreshProjectsList = async () => {
     try {
@@ -137,6 +155,9 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
       setImportManifestText(null);
       setImportParsedManifest(null);
       setImportPathInfo(null);
+      setStoryParsed(null);
+      setStoryRawText(null);
+      checkLocalServerStatus().then(setIsLocalAiReady).catch(() => setIsLocalAiReady(false));
     }
   }, [isOpen, initialTab]);
 
@@ -307,7 +328,75 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
     };
   };
 
-  // Selezione file o cartella per importazione
+  // Gestione selezione file di testo o trama (.txt, .md, .json)
+  const handlePickStoryFile = async () => {
+    try {
+      const filePath = await selectImportFile();
+      if (!filePath) return;
+      setImportPathInfo(filePath);
+
+      if (filePath.toLowerCase().endsWith('.json')) {
+        const jsonContent = await readManifestFile(filePath);
+        const raw = JSON.parse(jsonContent);
+        const parsed = normalizeManifestObject(raw);
+        setImportManifestText(JSON.stringify(parsed));
+        setImportParsedManifest(parsed);
+        setStoryParsed(null);
+        setStoryRawText(null);
+        return;
+      }
+
+      // File di testo (.txt o .md)
+      const textContent = await readTextFileContent(filePath);
+      const fileName = filePath.split(/[\\/]/).pop() || 'racconto.txt';
+      const parsed = parseStoryText(textContent, fileName);
+      setStoryRawText(textContent);
+      setStoryParsed(parsed);
+      setImportParsedManifest(null);
+      setImportManifestText(null);
+    } catch (e: any) {
+      showToast(`Errore apertura file: ${e.message}`, 'error');
+    }
+  };
+
+  const handleEnhanceWithLocalAI = async () => {
+    if (!storyRawText || !storyParsed) return;
+    setIsAnalyzingAi(true);
+    try {
+      const enhanced = await enhanceStoryWithLocalAI(storyRawText, storyParsed);
+      setStoryParsed(enhanced);
+      showToast('Trama analizzata ed arricchita con successo dal modello AI Locale!');
+    } catch (e: any) {
+      showToast(`Errore analisi AI Locale: ${e.message}`, 'error');
+    } finally {
+      setIsAnalyzingAi(false);
+    }
+  };
+
+  const handleExecuteStoryImport = async () => {
+    if (!storyParsed) return;
+    setIsProcessing(true);
+    try {
+      const imported = await importParsedStoryToDatabase(storyParsed);
+      await refreshProjectsList();
+      onProjectChanged(imported.id);
+      showToast(
+        `Progetto "${imported.title}" creato con successo! (${imported.chaptersCount} capitoli, ${storyParsed.characters.length} schede personaggio)`
+      );
+      setStoryParsed(null);
+      setStoryRawText(null);
+      setImportPathInfo(null);
+      setTimeout(() => {
+        setTab('library');
+      }, 1000);
+    } catch (err: any) {
+      showToast(`Errore importazione romanzo: ${err.message || err}`, 'error');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+    // Selezione file o cartella per importazione
   const handlePickManifestFile = async () => {
     try {
       const filePath = await selectManifestFile();
@@ -956,31 +1045,30 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
             </form>
           )}
 
-          {/* TAB 4: IMPORTA DA BACKUP */}
+{/* TAB 4: IMPORTA DA BACKUP O FILE DI TESTO/TRAMA */}
           {tab === 'import' && (
             <div className="space-y-5 max-w-2xl mx-auto">
               <div className="p-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/40">
                 <h4 className="text-sm font-semibold text-stone-900 dark:text-stone-100 flex items-center gap-2">
                   <Upload className="w-4 h-4 text-amber-600" />
-                  Reimportazione Completa nel Database SQLite
+                  Importa Trama, Manoscritto o Backup Completo
                 </h4>
                 <p className="text-xs text-stone-500 mt-1">
-                  Puoi ripristinare un progetto precedentemente esportato selezionando il file{' '}
-                  <code className="text-amber-700 dark:text-amber-400">zenscribe.manifest.json</code> oppure la cartella del progetto. Verranno ricreati tutti i capitoli, i testi formattati e le schede del Worldbuilding.
+                  Puoi importare file di testo o trame generati (<strong>.txt</strong>, <strong>.md</strong>) estraendo automaticamente titolo, capitoli, trama e personaggi (anche con il <strong>modello AI locale</strong>), oppure ripristinare un backup (<strong>.json</strong> o cartella esportata).
                 </p>
 
                 <div className="flex flex-wrap gap-3 mt-4">
                   <button
-                    onClick={handlePickManifestFile}
-                    className="px-4 py-2 rounded-xl bg-white dark:bg-stone-900 border border-stone-300 dark:border-stone-700 text-stone-800 dark:text-stone-200 text-xs font-medium hover:border-amber-500 flex items-center gap-2 transition-colors shadow-sm"
+                    onClick={handlePickStoryFile}
+                    className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm"
                   >
-                    <FileText className="w-4 h-4 text-amber-600" />
-                    Seleziona File Manifest (.json)
+                    <Sparkles className="w-4 h-4 text-amber-200" />
+                    Importa da File di Testo / Trama (.txt, .md, .json)
                   </button>
 
                   <button
                     onClick={handlePickManifestFolder}
-                    className="px-4 py-2 rounded-xl bg-white dark:bg-stone-900 border border-stone-300 dark:border-stone-700 text-stone-800 dark:text-stone-200 text-xs font-medium hover:border-amber-500 flex items-center gap-2 transition-colors shadow-sm"
+                    className="px-4 py-2.5 rounded-xl bg-white dark:bg-stone-900 border border-stone-300 dark:border-stone-700 text-stone-800 dark:text-stone-200 text-xs font-medium hover:border-amber-500 flex items-center gap-2 transition-colors shadow-sm"
                   >
                     <Folder className="w-4 h-4 text-indigo-600" />
                     Seleziona Cartella Esportata
@@ -988,9 +1076,135 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
                 </div>
               </div>
 
-              {/* Anteprima Manifest Caricato */}
+              {/* ANTEPRIMA STORIA ESTRATTA DA FILE DI TESTO/TRAMA */}
+              {storyParsed && (
+                <div className="p-4 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50/40 dark:bg-amber-950/30 space-y-3 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-600" />
+                      Struttura Romanzo Riconosciuta dal Testo
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-stone-500 flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full ${isLocalAiReady ? 'bg-emerald-500' : 'bg-stone-400'}`}></span>
+                        AI Locale: {isLocalAiReady ? 'Pronta' : 'Non attiva'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-stone-900 p-4 rounded-xl border border-stone-200 dark:border-stone-800 text-xs space-y-3">
+                    <div>
+                      <label className="block text-[10px] uppercase font-semibold text-stone-400 mb-1">
+                        Titolo Romanzo
+                      </label>
+                      <input
+                        type="text"
+                        value={storyParsed.title}
+                        onChange={(e) => setStoryParsed({ ...storyParsed, title: e.target.value })}
+                        className="w-full px-3 py-1.5 font-semibold text-sm rounded-lg border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-stone-600 dark:text-stone-300">
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-stone-400 block">Genere</span>
+                        <span className="font-medium text-stone-800 dark:text-stone-200">{storyParsed.genre || 'Narrativa'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-stone-400 block">Tono & Stile</span>
+                        <span className="font-medium text-stone-800 dark:text-stone-200">{storyParsed.styleTone || 'Non specificato'}</span>
+                      </div>
+                    </div>
+
+                    {storyParsed.description && (
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-stone-400 block mb-0.5">Premessa / Sinossi</span>
+                        <p className="text-stone-600 dark:text-stone-300 italic line-clamp-3">
+                          "{storyParsed.description}"
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Schede Personaggi Estratte */}
+                    {storyParsed.characters.length > 0 && (
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-stone-400 block mb-1.5 flex items-center gap-1">
+                          <Users className="w-3 h-3 text-amber-600" />
+                          Personaggi Estratti per la Bibbia ({storyParsed.characters.length}):
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {storyParsed.characters.map((c, i) => (
+                            <span
+                              key={i}
+                              title={c.description}
+                              className="px-2 py-0.5 rounded-md bg-stone-100 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-[11px] font-medium text-stone-700 dark:text-stone-300"
+                            >
+                              👤 {c.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Capitoli / Atti Riconosciuti */}
+                    {storyParsed.chapters.length > 0 && (
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-stone-400 block mb-1.5 flex items-center gap-1">
+                          <Layers className="w-3 h-3 text-indigo-600" />
+                          Capitoli che verranno generati ({storyParsed.chapters.length}):
+                        </span>
+                        <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                          {storyParsed.chapters.map((ch, i) => (
+                            <div
+                              key={i}
+                              className="px-2 py-1 rounded bg-stone-50 dark:bg-stone-950/60 border border-stone-150 dark:border-stone-800 text-[11px] text-stone-700 dark:text-stone-300 flex items-center justify-between"
+                            >
+                              <span>📖 {ch.title}</span>
+                              <span className="text-[10px] text-stone-400">Capitolo {i + 1}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleEnhanceWithLocalAI}
+                      disabled={isAnalyzingAi || isProcessing}
+                      className="px-3 py-1.5 rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-300 text-xs font-medium hover:border-amber-500 flex items-center gap-1.5 shadow-sm transition-colors"
+                    >
+                      <Cpu className="w-3.5 h-3.5 text-indigo-500" />
+                      {isAnalyzingAi ? 'Analisi AI Locale in corso...' : 'Affina con AI Locale (GGUF)'}
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setStoryParsed(null);
+                          setStoryRawText(null);
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-xs text-stone-500 hover:text-stone-700"
+                      >
+                        Annulla
+                      </button>
+                      <button
+                        onClick={handleExecuteStoryImport}
+                        disabled={isProcessing || isAnalyzingAi}
+                        className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        {isProcessing ? 'Creazione in corso...' : 'Conferma e Crea Progetto in ZenScribe'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ANTEPRIMA MANIFEST JSON NATIVO */}
               {importParsedManifest && (
-                <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800/80 bg-emerald-50/30 dark:bg-emerald-950/20 space-y-3">
+                <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800/80 bg-emerald-50/30 dark:bg-emerald-950/20 space-y-3 animate-in fade-in duration-200">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -1013,9 +1227,9 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
                       {importParsedManifest.project?.title || 'Progetto Senza Titolo'}
                     </div>
                     <div className="text-stone-500">
-                      Genere: <span className="text-stone-700 dark:text-stone-300 font-medium">{importParsedManifest.project.genre || 'Non specificato'}</span>
+                      Genere: <span className="text-stone-700 dark:text-stone-300 font-medium">{importParsedManifest.project?.genre || 'Non specificato'}</span>
                     </div>
-                    {importParsedManifest.project.description && (
+                    {importParsedManifest.project?.description && (
                       <div className="text-stone-500 italic">
                         "{importParsedManifest.project.description}"
                       </div>

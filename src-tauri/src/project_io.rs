@@ -123,6 +123,28 @@ pub async fn pick_manifest_file_dialog() -> Option<String> {
     file.map(|f| f.path().to_string_lossy().to_string())
 }
 
+/// Apre la finestra di dialogo nativa per selezionare un file di trama, testo (.txt, .md) o manifest (.json)
+pub async fn pick_import_file_dialog() -> Option<String> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_title("Seleziona file di trama, testo o backup ZenScribe")
+        .add_filter("Tutti i formati supportati (*.txt, *.md, *.json)", &["txt", "md", "json"])
+        .add_filter("Trame & Documenti di Testo (*.txt, *.md)", &["txt", "md"])
+        .add_filter("ZenScribe Manifest (*.json)", &["json"])
+        .pick_file()
+        .await;
+
+    file.map(|f| f.path().to_string_lossy().to_string())
+}
+
+/// Legge il contenuto testuale di qualsiasi file da percorso specificato
+pub fn read_text_file_from_path(path_str: &str) -> Result<String, String> {
+    let p = Path::new(path_str);
+    if !p.exists() {
+        return Err(format!("Il percorso '{}' non esiste sul disco.", path_str));
+    }
+    fs::read_to_string(p).map_err(|e| format!("Impossibile leggere il file '{}': {}", path_str, e))
+}
+
 /// Legge il contenuto del manifest JSON da un percorso specificato (file o cartella di progetto).
 /// Se viene selezionata una cartella senza manifest esplicito, o il file zenscribe.project.json,
 /// ricostruisce al volo il manifest completo leggendo i file .md della cartella Capitoli e Bibbia.
