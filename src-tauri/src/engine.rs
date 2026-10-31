@@ -4,14 +4,33 @@ use std::sync::Mutex;
 use candle_core::quantized::gguf_file;
 use candle_core::{Device, Tensor};
 use candle_transformers::generation::LogitsProcessor;
-use candle_transformers::models::quantized_llama::ModelWeights;
+use candle_transformers::models::quantized_llama::ModelWeights as LlamaWeights;
+use candle_transformers::models::quantized_phi3::ModelWeights as Phi3Weights;
+use candle_transformers::models::quantized_qwen2::ModelWeights as Qwen2Weights;
 use tokenizers::Tokenizer;
 
+pub enum QuantizedModel {
+    Llama(LlamaWeights),
+    Phi3(Phi3Weights),
+    Qwen2(Qwen2Weights),
+}
+
+impl QuantizedModel {
+    pub fn forward(&mut self, x: &Tensor, index_pos: usize) -> candle_core::Result<Tensor> {
+        match self {
+            Self::Llama(m) => m.forward(x, index_pos),
+            Self::Phi3(m) => m.forward(x, index_pos),
+            Self::Qwen2(m) => m.forward(x, index_pos),
+        }
+    }
+}
+
 pub struct LoadedEngine {
-    pub model: ModelWeights,
+    pub model: QuantizedModel,
     pub tokenizer: Option<Tokenizer>,
     pub device: Device,
     pub eos_token_id: u32,
+    pub arch_name: String,
 }
 
 pub struct NativeEngine {
@@ -54,6 +73,25 @@ impl NativeEngine {
         let content = gguf_file::Content::read(&mut file)
             .map_err(|e| format!("Errore lettura intestazione GGUF: {}", e))?;
 
+        let arch = content
+            .metadata
+            .get("general.architecture")
+            .and_then(|v| match v {
+                gguf_file::Value::String(s) => Some(s.to_lowercase()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "llama".to_string());
+
+        println!("[ZenScribe Native AI] Architettura GGUF rilevata: '{}'", arch);
+
+        // Verifica esplicita architetture non compatibili con Candle GGUF
+        if arch.contains("gemma") {
+            return Err(format!(
+                "Il modello '{}' utilizza l'architettura '{}' (Gemma 2) che non è supportata dal parser Candle GGUF. Si consiglia di utilizzare Llama 3.2 (1B o 3B), Qwen 2.5 o Mistral 7B.",
+                filename, arch
+            ));
+        }
+
         // 1. Individua o estrai il Tokenizer
         let mut tokenizer: Option<Tokenizer> = None;
 
@@ -92,15 +130,28 @@ impl NativeEngine {
             }
         }
 
-        // 2. Carica i pesi quantizzati del modello tramite Candle
-        let model = ModelWeights::from_gguf(content, &mut file, &device)
-            .map_err(|e| format!("Errore inizializzazione pesi modello GGUF: {}", e))?;
+        // 2. Carica i pesi quantizzati del modello in base all'architettura supportata
+        let model = if arch == "phi3" || arch == "phi" {
+            let m = Phi3Weights::from_gguf(false, content, &mut file, &device)
+                .map_err(|e| format!("Errore inizializzazione pesi modello Phi-3 GGUF: {}", e))?;
+            QuantizedModel::Phi3(m)
+        } else if arch == "qwen2" || arch == "qwen" {
+            let m = Qwen2Weights::from_gguf(content, &mut file, &device)
+                .map_err(|e| format!("Errore inizializzazione pesi modello Qwen2 GGUF: {}", e))?;
+            QuantizedModel::Qwen2(m)
+        } else {
+            // LLaMA, Mistral, Alpaca, Vicuna ecc.
+            let m = LlamaWeights::from_gguf(content, &mut file, &device)
+                .map_err(|e| format!("Errore inizializzazione pesi modello LLaMA/Mistral GGUF: {}", e))?;
+            QuantizedModel::Llama(m)
+        };
 
         let engine = LoadedEngine {
             model,
             tokenizer,
             device,
             eos_token_id,
+            arch_name: arch,
         };
 
         if let Ok(mut guard) = self.loaded_engine.lock() {
@@ -152,18 +203,47 @@ impl NativeEngine {
             .as_ref()
             .ok_or_else(|| "Tokenizer non disponibile per il modello selezionato.".to_string())?;
 
-        // Formattazione prompt compatibile con modelli Instruct (Llama 3 / Mistral)
-        let formatted_prompt = if let Some(sys) = system_prompt {
-            format!(
-                "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
-                sys.trim(),
-                prompt.trim()
-            )
+        // Formattazione prompt in base all'architettura specifica
+        let formatted_prompt = if engine.arch_name.contains("qwen") {
+            if let Some(sys) = system_prompt {
+                format!(
+                    "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+                    sys.trim(),
+                    prompt.trim()
+                )
+            } else {
+                format!(
+                    "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+                    prompt.trim()
+                )
+            }
+        } else if engine.arch_name.contains("phi") {
+            if let Some(sys) = system_prompt {
+                format!(
+                    "<|system|>\n{}<|end|>\n<|user|>\n{}<|end|>\n<|assistant|>\n",
+                    sys.trim(),
+                    prompt.trim()
+                )
+            } else {
+                format!(
+                    "<|user|>\n{}<|end|>\n<|assistant|>\n",
+                    prompt.trim()
+                )
+            }
         } else {
-            format!(
-                "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
-                prompt.trim()
-            )
+            // Llama 3 / Mistral default
+            if let Some(sys) = system_prompt {
+                format!(
+                    "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+                    sys.trim(),
+                    prompt.trim()
+                )
+            } else {
+                format!(
+                    "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+                    prompt.trim()
+                )
+            }
         };
 
         let encoding = tokenizer
@@ -179,10 +259,9 @@ impl NativeEngine {
         let mut generated_tokens: Vec<u32> = Vec::new();
         let device = &engine.device;
 
-        // Processo di inferenza autoregressiva
         let mut current_pos = 0;
 
-        // Prompt feed-forward
+        // Prompt feed-forward iniziale
         let input_tensor = Tensor::new(tokens, device)
             .and_then(|t| t.unsqueeze(0))
             .map_err(|e| format!("Errore creazione tensore di input: {}", e))?;
@@ -207,7 +286,14 @@ impl NativeEngine {
         current_pos += tokens.len();
 
         for _ in 0..max_tokens {
-            if next_token == engine.eos_token_id || next_token == 128009 || next_token == 2 {
+            if next_token == engine.eos_token_id
+                || next_token == 128009 // Llama 3 <|eot_id|>
+                || next_token == 128001 // Llama 3 <|end_of_text|>
+                || next_token == 151645 // Qwen 2 <|im_end|>
+                || next_token == 32000  // Phi-3 <|end|>
+                || next_token == 32007  // Phi-3 <|endoftext|>
+                || next_token == 2      // Generic EOS
+            {
                 break;
             }
 
@@ -250,6 +336,11 @@ fn clean_output(raw: &str) -> String {
     raw.replace("<|eot_id|>", "")
         .replace("<|end_of_text|>", "")
         .replace("<|begin_of_text|>", "")
+        .replace("<|start_header_id|>", "")
+        .replace("<|end_header_id|>", "")
+        .replace("<|im_start|>", "")
+        .replace("<|im_end|>", "")
+        .replace("<|end|>", "")
         .replace("</s>", "")
         .replace("<end_of_turn>", "")
         .trim()

@@ -370,18 +370,23 @@ pub fn run() {
             std::thread::spawn(move || {
                 let state = app_handle.state::<AppAiState>();
                 let available = scan_local_models(&app_handle, None);
-                if let Some(first) = available.first() {
-                    println!(
-                        "[ZenScribe] Trovato modello locale disponibile: {}. Caricamento automatico...",
-                        first.filename
-                    );
-                    if let Some(path) = resolve_model_file(&app_handle, &first.filename) {
-                        if let Err(e) = state.engine.load_model(&path, &first.filename) {
-                            eprintln!("[ZenScribe] Errore precaricamento modello iniziale: {}", e);
+                let mut loaded_any = false;
+                for item in &available {
+                    if let Some(path) = resolve_model_file(&app_handle, &item.filename) {
+                        match state.engine.load_model(&path, &item.filename) {
+                            Ok(_) => {
+                                println!("[ZenScribe] Modello '{}' precaricato con successo all'avvio.", item.filename);
+                                loaded_any = true;
+                                break;
+                            }
+                            Err(e) => {
+                                eprintln!("[ZenScribe] Modello '{}' non caricabile all'avvio: {}. Provo successivo.", item.filename, e);
+                            }
                         }
                     }
-                } else {
-                    println!("[ZenScribe] Nessun modello locale presente in cache. L'utente potrà scaricarlo dai preset.");
+                }
+                if !loaded_any {
+                    println!("[ZenScribe] Nessun modello locale compatibile attivo in memoria.");
                 }
             });
             Ok(())

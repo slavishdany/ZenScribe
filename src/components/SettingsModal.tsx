@@ -695,6 +695,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   Personalizzato
                                 </span>
                               )}
+                              {m.filename.toLowerCase().includes('gemma') && (
+                                <span className="text-[10px] bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400 px-1.5 py-0.2 rounded font-semibold flex items-center gap-1">
+                                  <AlertCircle className="w-2.5 h-2.5" /> Non supportato (Gemma 2)
+                                </span>
+                              )}
                             </div>
                             <div className="text-[10px] text-stone-500 font-mono">
                               {m.filename} · {(m.size_mb / 1024).toFixed(2)} GB

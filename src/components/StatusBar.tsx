@@ -30,6 +30,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const displayModelLabel = activeModelName
     ? activeModelName.toLowerCase().includes("llama-3.2-3b")
       ? "Llama 3.2 3B"
+      : activeModelName.toLowerCase().includes("llama-3.2-1b")
+      ? "Llama 3.2 1B"
       : activeModelName.toLowerCase().includes("gemma-2-2b")
       ? "Gemma 2 2B"
       : activeModelName.toLowerCase().includes("mistral-7b")

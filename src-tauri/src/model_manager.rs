@@ -54,14 +54,14 @@ pub fn get_preset_models_list() -> Vec<PresetModel> {
             approx_bytes: 2_170_000_000,
         },
         PresetModel {
-            id: "gemma-2-2b".to_string(),
-            name: "Gemma 2 2B".to_string(),
-            badge: "Leggerissimo".to_string(),
-            description: "Circa 1.6 GB. Ideale per computer datati o laptop.".to_string(),
-            repo_id: "bartowski/gemma-2-2b-it-GGUF".to_string(),
-            filename: "gemma-2-2b-it-Q4_K_M.gguf".to_string(),
-            size_label: "1.75 GB".to_string(),
-            approx_bytes: 1_880_000_000,
+            id: "llama-3.2-1b".to_string(),
+            name: "Llama 3.2 1B".to_string(),
+            badge: "Leggerissimo - Ultra Veloce".to_string(),
+            description: "Circa 1.2 GB. Minimo consumo di memoria (RAM/VRAM), perfetto per qualsiasi PC o laptop.".to_string(),
+            repo_id: "bartowski/Llama-3.2-1B-Instruct-GGUF".to_string(),
+            filename: "Llama-3.2-1B-Instruct-Q4_K_M.gguf".to_string(),
+            size_label: "1.23 GB".to_string(),
+            approx_bytes: 1_320_000_000,
         },
         PresetModel {
             id: "mistral-7b-v0.3".to_string(),
@@ -134,9 +134,9 @@ pub fn format_model_display_name(filename: &str) -> (String, bool) {
     } else if lower.contains("llama-3.2-3b") {
         ("Llama 3.2 3B Instruct".to_string(), false)
     } else if lower.contains("llama-3.2-1b") {
-        ("Llama 3.2 1B Instruct".to_string(), false)
-    } else if lower.contains("gemma-2-2b") {
-        ("Gemma 2 2B Instruct".to_string(), false)
+        ("Llama 3.2 1B Instruct (Ultra Veloce)".to_string(), false)
+    } else if lower.contains("gemma") {
+        ("Gemma (Incompatibile Candle)".to_string(), true)
     } else if lower.contains("mistral-7b") {
         ("Mistral 7B v0.3 Instruct".to_string(), false)
     } else if lower.contains("phi-3-medium") {
