@@ -64,12 +64,12 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
 
   return (
     <header
-      className={`px-4 py-2 border-b border-stone-200/80 dark:border-stone-800/80 bg-zen-bg/90 dark:bg-zen-darkBg/90 backdrop-blur-md flex items-center justify-between transition-all duration-300 z-10 ${
+      className={`px-3 sm:px-4 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] border-b border-stone-200/80 dark:border-stone-800/80 bg-zen-bg/90 dark:bg-zen-darkBg/90 backdrop-blur-md flex items-center justify-between gap-2 overflow-x-auto no-scrollbar transition-all duration-300 z-10 ${
         zenMode ? '-translate-y-full opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
       }`}
     >
       {/* Brand & Strumenti Formattazione */}
-      <div className="flex items-center space-x-1 sm:space-x-1.5">
+      <div className="flex items-center space-x-1 sm:space-x-1.5 flex-shrink-0">
         {onToggleChapters && (
           <button
             onClick={onToggleChapters}
@@ -206,7 +206,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
       </div>
 
       {/* Preferenze Tipografia, Layout & Assistente AI */}
-      <div className="flex items-center space-x-1.5 sm:space-x-2">
+      <div className="flex items-center space-x-1.5 sm:space-x-2 flex-shrink-0">
         {/* Scelta Font */}
         <div className="flex items-center bg-stone-200/50 dark:bg-stone-800/50 rounded-lg p-0.5 text-xs">
           <button

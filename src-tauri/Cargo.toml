@@ -21,4 +21,6 @@ futures-util = "0.3"
 candle-core = "0.11.0"
 candle-transformers = "0.11.0"
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.15"

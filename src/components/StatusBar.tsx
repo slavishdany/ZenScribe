@@ -43,7 +43,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
   return (
     <footer
-      className={`h-9 px-4 border-t border-stone-200 dark:border-stone-800 bg-zen-surface/90 dark:bg-zen-darkSurface/90 backdrop-blur-sm flex items-center justify-between text-xs text-zen-subtle dark:text-zen-darkSubtle select-none transition-opacity duration-300 ${
+      className={`min-h-9 px-3 sm:px-4 py-1 pb-[calc(env(safe-area-inset-bottom,0px)+0.25rem)] border-t border-stone-200 dark:border-stone-800 bg-zen-surface/90 dark:bg-zen-darkSurface/90 backdrop-blur-sm flex items-center justify-between text-xs text-zen-subtle dark:text-zen-darkSubtle select-none transition-opacity duration-300 ${
         zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'
       }`}
     >

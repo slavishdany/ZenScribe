@@ -94,7 +94,12 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
     : null;
 
   return (
-    <div className="fixed inset-y-0 left-0 z-40 w-80 bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-800 shadow-xl flex flex-col animate-fade-in select-none">
+    <>
+      <div
+        className="fixed inset-0 bg-black/40 backdrop-blur-xs z-30 transition-opacity"
+        onClick={onClose}
+      />
+      <div className="fixed inset-y-0 left-0 z-40 w-80 max-w-[85vw] bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-800 shadow-2xl flex flex-col animate-fade-in select-none">
       {/* Intestazione */}
       <div className="p-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between bg-stone-50/60 dark:bg-stone-950/40">
         <div className="flex items-center space-x-2 text-stone-800 dark:text-stone-200 font-semibold text-sm">
@@ -371,5 +376,6 @@ export const ChapterSidebar: React.FC<ChapterSidebarProps> = ({
         </div>
       </div>
     </div>
+    </>
   );
 };
