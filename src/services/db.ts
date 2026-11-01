@@ -208,7 +208,7 @@ async function createSchema(db: Database): Promise<void> {
     if (!docs || docs.length === 0) {
       await db.execute(
         `INSERT INTO documents (id, title, content, project_id)
-         VALUES ('capitolo-principale', 'Capitolo 1: La Chiarezza', '<h1>La Chiarezza delle Parole</h1><p>Inizia a scrivere qui. Il database SQLite locale è sempre l\\'unica fonte di verità e memorizza ogni parola istantaneamente.</p>', 'default')`
+         VALUES ('capitolo-principale', 'Capitolo 1: La Chiarezza', '<h1>La Chiarezza delle Parole</h1><p>Inizia a scrivere qui. Il database SQLite locale è sempre l''unica fonte di verità e memorizza ogni parola istantaneamente.</p>', 'default')`
       );
     }
   } catch (e) {

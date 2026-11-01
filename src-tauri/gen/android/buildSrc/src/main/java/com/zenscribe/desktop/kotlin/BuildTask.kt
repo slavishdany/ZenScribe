@@ -24,43 +24,35 @@ abstract class BuildTask : DefaultTask() {
     @TaskAction
     fun assemble() {
         val executable = """npm""";
-        try {
-            runTauriCli(executable)
-        } catch (e: Exception) {
-            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                // Try different Windows-specific extensions
-                val fallbacks = listOf(
-                    "$executable.exe",
-                    "$executable.cmd",
-                    "$executable.bat",
-                )
-
-                var lastException: Exception = e
-                for (fallback in fallbacks) {
-                    try {
-                        runTauriCli(fallback)
-                        return
-                    } catch (fallbackException: Exception) {
-                        lastException = fallbackException
-                    }
+        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+            try {
+                runTauriCli("cmd", listOf("/c", executable))
+            } catch (e: Exception) {
+                try {
+                    runTauriCli("cmd", listOf("/c", "$executable.cmd"))
+                } catch (fallbackException: Exception) {
+                    throw fallbackException
                 }
-                throw lastException
-            } else {
-                throw e;
             }
+        } else {
+            runTauriCli(executable, emptyList())
         }
     }
 
-    fun runTauriCli(executable: String) {
+    fun runTauriCli(executable: String, prefixArgs: List<String> = emptyList()) {
         val rootDirRel = rootDirRel ?: throw GradleException("rootDirRel cannot be null")
         val target = target ?: throw GradleException("target cannot be null")
         val release = release ?: throw GradleException("release cannot be null")
-        val args = listOf("run", "--", "tauri", "android", "android-studio-script");
+        val args = prefixArgs + listOf("run", "--", "tauri", "android", "android-studio-script");
+
+        val existingAarch64 = System.getenv("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS") ?: "-Clink-arg=-landroid -Clink-arg=-llog -Clink-arg=-lOpenSLES"
+        val aarch64Flags = if (existingAarch64.contains("+fp16")) existingAarch64 else "-C target-feature=+fp16 $existingAarch64"
 
         execOperations.exec {
             workingDir(File(projectDir, rootDirRel))
             executable(executable)
             args(args)
+            environment("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS", aarch64Flags)
             if (logger.isEnabled(LogLevel.DEBUG)) {
                 args("-vv")
             } else if (logger.isEnabled(LogLevel.INFO)) {
