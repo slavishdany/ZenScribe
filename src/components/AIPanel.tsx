@@ -139,8 +139,6 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     }
   }, [chatMessages, activeTab, chatLoading]);
 
-  if (!isOpen) return null;
-
   // Risolve impostazioni cloud correnti
   const resolvedSettings: EditorSettings = settings || {
     font: 'serif',
@@ -472,6 +470,8 @@ In questo modo ZenScribe permetterà all'autore di applicare la correzione al ma
       prompt: 'Noti contraddizioni o incongruenze tra quanto accade in questo brano e i dettagli o regole specificati nella bibbia narrativa?',
     },
   ];
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
