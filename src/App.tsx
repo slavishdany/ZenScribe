@@ -35,6 +35,7 @@ import {
   getActiveProjectId,
   setActiveProjectId,
   esportaSnapshotProgetto,
+  markdownToEditorHtml,
 } from './services/db';
 import {
   selectProjectFolder,
@@ -375,6 +376,23 @@ export const App: React.FC = () => {
     editorInstance.chain().focus().insertContent(`\n\n${newText}`).run();
   };
 
+  // Sostituisce l'intero contenuto del capitolo attivo nell'editor e nel database SQLite
+  const handleReplaceChapterContent = async (newContent: string) => {
+    if (!editorInstance) return;
+    const htmlContent = markdownToEditorHtml(newContent);
+    editorInstance.commands.setContent(htmlContent, true);
+
+    const activeChap = chapters.find((c) => c.id === activeChapterId);
+    if (activeChap) {
+      const firstLine = editorInstance.getText().split('\n').find((l) => l.trim() !== '') ?? '';
+      const title = activeChap.title || firstLine.trim().slice(0, 80) || 'Capitolo';
+      await salvaCapitolo(activeChap.id, title, htmlContent);
+      setChapters((prev) =>
+        prev.map((c) => (c.id === activeChap.id ? { ...c, content: htmlContent } : c))
+      );
+    }
+  };
+
   // Seleziona cartella di backup su disco
   const handleSelectProjectFolder = async () => {
     const selected = await selectProjectFolder();
@@ -533,6 +551,7 @@ export const App: React.FC = () => {
         settings={settings}
         onClose={() => setIsAIPanelOpen(false)}
         onReplaceText={handleReplaceText}
+        onReplaceChapterContent={handleReplaceChapterContent}
         onInsertAfter={handleInsertAfter}
         onOpenSettings={() => {
           setIsAIPanelOpen(false);

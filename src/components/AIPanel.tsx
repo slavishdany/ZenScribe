@@ -15,8 +15,8 @@ import {
   FileText,
   Layers,
   Compass,
-  RefreshCw,
-  HelpCircle,
+  CheckCircle2,
+  Zap,
 } from 'lucide-react';
 import { correctSpellingLocal, rephraseTextLocal, chatWithLocalAI } from '../services/localAi';
 import {
@@ -43,6 +43,7 @@ interface AIPanelProps {
   projectTitle?: string;
   onClose: () => void;
   onReplaceText: (newText: string) => void;
+  onReplaceChapterContent?: (newContent: string) => void;
   onInsertAfter: (newText: string) => void;
   onOpenSettings: () => void;
 }
@@ -52,6 +53,23 @@ function stripHtml(html: string): string {
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
   return (tmp.textContent || tmp.innerText || '').trim();
+}
+
+/**
+ * Estrae il testo pulito applicabile dall'output dell'assistente,
+ * estraendo blocchi racchiusi in ``` o """ se presenti.
+ */
+function extractApplicableText(raw: string): string {
+  if (!raw) return '';
+  const codeBlockMatch = raw.match(/```(?:testo-revisionato|markdown|text|it)?\s*([\s\S]*?)```/i);
+  if (codeBlockMatch && codeBlockMatch[1] && codeBlockMatch[1].trim()) {
+    return codeBlockMatch[1].trim();
+  }
+  const tripleQuotesMatch = raw.match(/"""\s*([\s\S]*?)"""/);
+  if (tripleQuotesMatch && tripleQuotesMatch[1] && tripleQuotesMatch[1].trim()) {
+    return tripleQuotesMatch[1].trim();
+  }
+  return raw.trim();
 }
 
 export const AIPanel: React.FC<AIPanelProps> = ({
@@ -67,6 +85,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   projectTitle,
   onClose,
   onReplaceText,
+  onReplaceChapterContent,
   onInsertAfter,
   onOpenSettings,
 }) => {
@@ -81,6 +100,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [appliedToast, setAppliedToast] = useState<string | null>(null);
 
   // Ambito di contesto per la chat
   const [contextScope, setContextScope] = useState<ChatContextScope>(() => {
@@ -93,7 +113,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // ============================================================================
-  // STATO STRUMENTI RAPIDI (Esistente)
+  // STATO STRUMENTI RAPIDI
   // ============================================================================
   const [quickInputText, setQuickInputText] = useState(selectedText);
   const [quickResultText, setQuickResultText] = useState('');
@@ -183,7 +203,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     switch (scope) {
       case 'selection':
         if (selectedText.trim()) {
-          contextStr = `=== TESTO / PARAGRAFO SELEZIONATO DALL'AUTORE ===\n"""\n${selectedText.trim()}\n"""\n`;
+          contextStr = `=== TESTO / PARAGRAFO SELEZIONATO DALL'AUTORE NELL'EDITOR ===\n"""\n${selectedText.trim()}\n"""\n`;
         }
         if (narrativeBible.trim()) {
           contextStr += `\n${narrativeBible.trim()}`;
@@ -192,7 +212,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 
       case 'chapter':
         const cleanContent = stripHtml(currentChapterContent || '');
-        contextStr = `=== CAPITOLO CORRENTE ("${currentChapterTitle || 'Senza titolo'}") ===\n"""\n${cleanContent}\n"""\n`;
+        contextStr = `=== TESTO INTEGRALE DEL CAPITOLO CORRENTE ("${currentChapterTitle || 'Senza titolo'}") ===\n"""\n${cleanContent}\n"""\n`;
         if (narrativeBible.trim()) {
           contextStr += `\n${narrativeBible.trim()}`;
         }
@@ -247,8 +267,18 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     try {
       let assistantReply = '';
       const systemInstruction = `Sei un acclamato editor letterario professionista e co-autore creativo al fianco dello scrittore in ZenScribe.
-Il tuo compito è dialogare con l'autore, analizzare paragrafi, dare pareri franchi e costruttivi sul ritmo, dialoghi, tensione narrativa e personaggi, suggerire colpi di scena o idee di trama e risolvere qualsiasi blocco creativo.
-Rispondi in italiano con uno stile stimolante, empatico, analitico e direttamente spendibile nella stesura. Rispetta rigorosamente il genere, il registro e le regole del mondo fornite nel contesto.`;
+Il tuo compito è dialogare con l'autore, analizzare brani e capitoli, dare pareri costruttivi sul ritmo, dialoghi, suspense e stile, e risolvere blocchi creativi.
+Rispondi in italiano con uno stile stimolante, empatico, analitico e letterario.
+
+DIRETTIVA ESSENZIALE PER CORREZIONI, REVISIONI ED EDITING DEL TESTO:
+Se l'autore ti chiede di 'correggere', 'revisionare', 'riscrivere', 'ripulire la punteggiatura o l'ortografia' del testo in esame, del capitolo o del manoscritto:
+1. Fornisci SEMPRE il testo corretto/revisionato COMPLETO pronto all'uso.
+2. Racchiudi la versione corretta pronta per l'applicazione all'interno di un blocco ben delimitato:
+\`\`\`testo-revisionato
+[Inserisci qui l'intero testo corretto e pronto per essere salvato nel capitolo dell'autore]
+\`\`\`
+3. Se desideri spiegare brevemente cosa hai modificato (es. 'Ho corretto la punteggiatura dei dialoghi e rimosso 3 refusi'), aggiungi la tua nota DOPO il blocco.
+In questo modo ZenScribe permetterà all'autore di applicare la correzione al manoscritto con un solo click!`;
 
       // Costruzione dei messaggi formattati con contesto allegato per la chiamata
       const apiMessages: ChatMessage[] = [];
@@ -257,7 +287,7 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
       if (contextAttached) {
         apiMessages.push({
           role: 'system',
-          content: `${systemInstruction}\n\nECCO IL CONTESTO DELL'OPERA E DEL BRANO IN ESAME:\n${contextAttached}`,
+          content: `${systemInstruction}\n\nECCO IL CONTESTO DELL'OPERA E DEL TESTO SU CUI LAVORARE:\n${contextAttached}`,
         });
       } else {
         apiMessages.push({
@@ -315,9 +345,36 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
   };
 
   const handleCopyMessage = (msgId: string, content: string) => {
-    navigator.clipboard.writeText(content);
+    const textToCopy = extractApplicableText(content);
+    navigator.clipboard.writeText(textToCopy);
     setCopiedMessageId(msgId);
     setTimeout(() => setCopiedMessageId(null), 2000);
+  };
+
+  // Applicazione diretta all'intero Capitolo corrente nell'editor
+  const handleApplyToChapter = (content: string) => {
+    const cleanText = extractApplicableText(content);
+    if (onReplaceChapterContent) {
+      onReplaceChapterContent(cleanText);
+      setAppliedToast(`Modifiche applicate con successo all'intero capitolo "${currentChapterTitle || 'Attivo'}"!`);
+      setTimeout(() => setAppliedToast(null), 3500);
+    }
+  };
+
+  // Applicazione alla Selezione attiva
+  const handleApplyToSelection = (content: string) => {
+    const cleanText = extractApplicableText(content);
+    onReplaceText(cleanText);
+    setAppliedToast('Testo corretto sostituito nella selezione dell\'editor!');
+    setTimeout(() => setAppliedToast(null), 3500);
+  };
+
+  // Inserimento dopo la selezione/cursore
+  const handleInsertAfterText = (content: string) => {
+    const cleanText = extractApplicableText(content);
+    onInsertAfter(cleanText);
+    setAppliedToast('Testo aggiunto dopo la posizione corrente nell\'editor!');
+    setTimeout(() => setAppliedToast(null), 3500);
   };
 
   const handleClearChat = () => {
@@ -387,6 +444,10 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
 
   // Prompt rapidi per la chat
   const quickPrompts = [
+    {
+      label: '✍️ Correggi punteggiatura & refusi del capitolo',
+      prompt: 'Correggi accuratamente tutti i refusi, la punteggiatura e l\'ortografia dell\'intero capitolo corrente, preservando intatto lo stile e la voce dell\'autore. Fornisci il testo corretto pronto per l\'editor.',
+    },
     {
       label: '🧐 Valuta paragrafo',
       prompt: 'Cosa ne pensi di questo passaggio? Quali sono i suoi punti di forza e dove risulta debole o poco efficace?',
@@ -463,6 +524,19 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
             </button>
           </div>
         </div>
+
+        {/* Notifica di modifica applicata all'editor */}
+        {appliedToast && (
+          <div className="bg-emerald-500 text-white px-4 py-2 text-xs flex items-center justify-between shadow-sm animate-fade-in">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{appliedToast}</span>
+            </div>
+            <button onClick={() => setAppliedToast(null)} className="text-white/80 hover:text-white">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* ========================================================================= */}
         {/* TAB 1: CHAT EDITORIALE APERTA */}
@@ -584,17 +658,17 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
                   </div>
                   <div>
                     <h4 className="text-sm font-semibold text-stone-800 dark:text-stone-200">
-                      Il tuo Editor Letterario al tuo fianco
+                      Editor Letterario Interattivo
                     </h4>
                     <p className="text-xs text-stone-500 dark:text-stone-400 mt-1 leading-relaxed">
-                      Fai qualsiasi domanda aperta: chiedi un parere sincero su un paragrafo, valuta il ritmo del capitolo, proponi alternative di trama o esplora le motivazioni dei personaggi.
+                      Fai qualsiasi domanda o chiedi di correggere il testo. L'AI ha accesso diretto al testo in esame e potrai applicare le correzioni direttamente nell'editor con un solo tocco!
                     </p>
                   </div>
 
                   {/* Quick Prompts Chips */}
                   <div className="w-full pt-2">
                     <p className="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">
-                      Domande frequenti degli autori:
+                      Azioni frequenti:
                     </p>
                     <div className="flex flex-wrap gap-2 justify-center">
                       {quickPrompts.map((qp, idx) => (
@@ -635,36 +709,61 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
                     >
                       <div className="whitespace-pre-wrap font-sans">{msg.content}</div>
 
-                      {/* Azioni del messaggio (per l'assistente) */}
+                      {/* Azioni dirette sull'Editor del testo (per l'assistente) */}
                       {msg.role === 'assistant' && (
-                        <div className="mt-3 pt-2 border-t border-stone-100 dark:border-stone-700/60 flex items-center justify-between text-[11px] text-stone-500">
-                          <button
-                            onClick={() => handleCopyMessage(msg.id, msg.content)}
-                            className="flex items-center space-x-1 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                          >
-                            {copiedMessageId === msg.id ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-600" />
-                                <span className="text-emerald-600 font-medium">Copiato!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" />
-                                <span>Copia</span>
-                              </>
+                        <div className="mt-3 pt-2.5 border-t border-stone-100 dark:border-stone-700/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                          <div className="flex items-center space-x-2">
+                            {/* Applica al Capitolo */}
+                            {onReplaceChapterContent && (
+                              <button
+                                onClick={() => handleApplyToChapter(msg.content)}
+                                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium shadow-2xs transition-colors"
+                                title="Sostituisce l'intero capitolo corrente con il testo revisionato dall'AI"
+                              >
+                                <Zap className="w-3 h-3" />
+                                <span>Applica al Capitolo</span>
+                              </button>
                             )}
-                          </button>
 
-                          <button
-                            onClick={() => {
-                              onInsertAfter(msg.content);
-                              onClose();
-                            }}
-                            className="flex items-center space-x-1 text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-medium"
-                          >
-                            <span>Inserisci nel capitolo</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </button>
+                            {/* Sostituisci Selezione */}
+                            {selectedText && selectedText.trim() && (
+                              <button
+                                onClick={() => handleApplyToSelection(msg.content)}
+                                className="flex items-center space-x-1 px-2 py-1 rounded-lg bg-stone-100 dark:bg-stone-700 hover:bg-stone-200 dark:hover:bg-stone-600 text-stone-700 dark:text-stone-200 font-medium transition-colors"
+                                title="Sostituisce la selezione attiva nell'editor"
+                              >
+                                <span>Sostituisci Selezione</span>
+                              </button>
+                            )}
+
+                            {/* Inserisci in Coda */}
+                            <button
+                              onClick={() => handleInsertAfterText(msg.content)}
+                              className="flex items-center space-x-1 px-2 py-1 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-600 dark:text-stone-300 transition-colors"
+                              title="Aggiunge dopo la posizione corrente"
+                            >
+                              <span>Aggiungi in coda</span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleCopyMessage(msg.id, msg.content)}
+                              className="flex items-center space-x-1 text-stone-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                            >
+                              {copiedMessageId === msg.id ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  <span className="text-emerald-600 font-medium">Copiato!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>Copia</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -675,10 +774,10 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
               {/* Indicatore di caricamento risposta */}
               {chatLoading && (
                 <div className="flex flex-col items-start space-y-1">
-                  <div className="text-[10px] text-stone-400 px-1">Editor AI sta riflettendo...</div>
+                  <div className="text-[10px] text-stone-400 px-1">Editor AI sta elaborando la correzione...</div>
                   <div className="bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700/80 rounded-2xl rounded-bl-xs p-3 text-xs flex items-center space-x-2 text-stone-500 shadow-2xs">
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                    <span>Analisi in corso con {chatEngine === 'local' ? modelBadge : 'Cloud AI'}...</span>
+                    <span>Elaborazione testo in corso con {chatEngine === 'local' ? modelBadge : 'Cloud AI'}...</span>
                   </div>
                 </div>
               )}
@@ -708,7 +807,7 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
                       handleSendChatMessage();
                     }
                   }}
-                  placeholder="Chiedi all'editor (es. 'Cosa ne pensi?', 'Come miglioro il ritmo?', 'Dammi 3 colpi di scena')..."
+                  placeholder="Chiedi all'editor (es. 'Correggi punteggiatura ed ortografia del capitolo', 'Cosa ne pensi?')..."
                   rows={2}
                   className="flex-1 p-2.5 text-xs font-sans rounded-xl border border-stone-200 dark:border-stone-750 bg-stone-50/70 dark:bg-stone-950/60 text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
                 />
@@ -725,7 +824,7 @@ Rispondi in italiano con uno stile stimolante, empatico, analitico e direttament
 
               <div className="flex items-center justify-between text-[11px] text-stone-400 px-1">
                 <span>Premi <strong>Enter</strong> per inviare, <strong>Shift + Enter</strong> per nuova riga</span>
-                <span>Contesto: <strong>{contextScope}</strong></span>
+                <span>Contesto attivo: <strong>{contextScope}</strong></span>
               </div>
             </div>
           </div>

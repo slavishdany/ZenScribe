@@ -875,7 +875,7 @@ export async function esportaSnapshotProgetto(
 /**
  * Converte testo Markdown semplice in HTML compatibile con l'editor TipTap
  */
-function markdownToEditorHtml(md: string): string {
+export function markdownToEditorHtml(md: string): string {
   if (!md || md.trim() === '') return '<p></p>';
   if (/<[a-z][\s\S]*>/i.test(md)) {
     return md;
