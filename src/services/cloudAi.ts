@@ -7,18 +7,25 @@ export interface AICompletionOptions {
   maxTokens?: number;
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
 /**
- * Esegue una chiamata unificata verso il Cloud Provider attivo (Gemini, OpenAI, Anthropic, OpenRouter, Groq o Custom)
+ * Esegue una conversazione multi-turn con il Cloud Provider attivo (Gemini, OpenAI, Anthropic, OpenRouter, Groq o Custom)
  */
-export async function generateWithCloudProvider(
+export async function chatWithCloudProvider(
   cloudSettings: CloudSettings,
-  prompt: string,
+  messages: ChatMessage[],
+  systemInstruction?: string,
   options: AICompletionOptions = {}
 ): Promise<string> {
   const providerType = cloudSettings.activeProvider;
   const config = cloudSettings.providers[providerType];
 
-  const systemInstruction =
+  const effectiveSystemInstruction =
+    systemInstruction ||
     options.systemInstruction ||
     "Sei un assistente editoriale e creativo per scrittori di narrativa. Aiuta l'autore a sviluppare la storia rispettando fedelmente il genere, il tono, il punto di vista e le regole del mondo fornite.";
 
@@ -36,12 +43,25 @@ export async function generateWithCloudProvider(
         primaryModel = "gemini-3.8-flash";
       }
 
-      // Modelli candidati in ordine di priorità: se un modello restituisce 503 (sovraccarico temporaneo di Google), effettua il fallback automatico
+      // Modelli candidati in ordine di priorità: fallback se 503
       const candidateModels = [
         primaryModel,
         primaryModel !== "gemini-1.5-flash" ? "gemini-1.5-flash" : "gemini-3.8-flash",
         "gemini-1.5-pro",
       ].filter((m, i, arr) => arr.indexOf(m) === i);
+
+      // In Gemini API i ruoli accettati nei contents sono 'user' e 'model'
+      const contents = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }],
+        }));
+
+      // Se non ci sono messaggi validi, fallback di sicurezza
+      if (contents.length === 0) {
+        throw new Error("Nessun messaggio fornito per l'elaborazione.");
+      }
 
       let lastError: any = null;
 
@@ -49,11 +69,11 @@ export async function generateWithCloudProvider(
         try {
           const model = genAI.getGenerativeModel({
             model: modelToTry,
-            systemInstruction,
+            systemInstruction: effectiveSystemInstruction,
           });
 
           const result = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            contents,
             generationConfig: {
               temperature: options.temperature ?? 0.7,
               maxOutputTokens: options.maxTokens ?? 8192,
@@ -66,14 +86,13 @@ export async function generateWithCloudProvider(
           lastError = err;
           const errMsg = err?.message || String(err);
 
-          // Se l'errore è un 503 (High Demand / Sovraccarico temporaneo) o 404 (modello rimosso), prova con il modello di riserva
+          // Se l'errore è un 503 o 404, prova con modello di riserva
           if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("404")) {
             console.warn(`[Gemini] Modello '${modelToTry}' sovraccarico o non disponibile (${errMsg}). Tentativo con modello fallback...`);
             await new Promise((res) => setTimeout(res, 800));
             continue;
           }
 
-          // Per altri errori (chiave errata, violazione policy), lancia subito
           throw err;
         }
       }
@@ -99,7 +118,6 @@ export async function generateWithCloudProvider(
         else baseUrl = "http://localhost:11434/v1";
       }
 
-      // Rimuovi trailing slash
       baseUrl = baseUrl.replace(/\/+$/, "");
       const endpoint = `${baseUrl}/chat/completions`;
 
@@ -120,15 +138,22 @@ export async function generateWithCloudProvider(
       if (providerType === "openrouter") defaultModel = "deepseek/deepseek-chat";
       if (providerType === "groq") defaultModel = "llama-3.3-70b-versatile";
 
+      const apiMessages: Array<{ role: string; content: string }> = [];
+      if (effectiveSystemInstruction) {
+        apiMessages.push({ role: "system", content: effectiveSystemInstruction });
+      }
+      for (const m of messages) {
+        if (m.role === "user" || m.role === "assistant") {
+          apiMessages.push({ role: m.role, content: m.content });
+        }
+      }
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify({
           model: config.model || defaultModel,
-          messages: [
-            { role: "system", content: systemInstruction },
-            { role: "user", content: prompt },
-          ],
+          messages: apiMessages,
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 4096,
         }),
@@ -155,6 +180,10 @@ export async function generateWithCloudProvider(
       const baseUrl = config.baseUrl || "https://api.anthropic.com/v1";
       const endpoint = `${baseUrl.replace(/\/+$/, "")}/messages`;
 
+      const anthropicMessages = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -167,8 +196,8 @@ export async function generateWithCloudProvider(
           model: config.model || "claude-3-5-haiku-20241022",
           max_tokens: options.maxTokens ?? 8192,
           temperature: options.temperature ?? 0.7,
-          system: systemInstruction,
-          messages: [{ role: "user", content: prompt }],
+          system: effectiveSystemInstruction,
+          messages: anthropicMessages,
         }),
       });
 
@@ -195,7 +224,23 @@ export async function generateWithCloudProvider(
 }
 
 /**
- * Continua la narrazione basandosi sul testo scritto e sul contesto del progetto
+ * Esegue una singola chiamata con prompt verso il Cloud Provider attivo
+ */
+export async function generateWithCloudProvider(
+  cloudSettings: CloudSettings,
+  prompt: string,
+  options: AICompletionOptions = {}
+): Promise<string> {
+  return chatWithCloudProvider(
+    cloudSettings,
+    [{ role: "user", content: prompt }],
+    options.systemInstruction,
+    options
+  );
+}
+
+/**
+ * Continua la scrittura creativa partendo dal testo corrente
  */
 export async function continueWritingCreative(
   settings: EditorSettings,

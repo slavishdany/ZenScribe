@@ -193,3 +193,25 @@ export async function generateLocalAI(
   }
   throw new Error("Il motore AI nativo richiede l'ambiente desktop ZenScribe.");
 }
+
+/**
+ * Esegue una conversazione multi-turn con il motore AI nativo locale (Candle GGUF)
+ */
+export async function chatWithLocalAI(
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  systemPrompt?: string,
+  temperature = 0.4,
+  maxTokens = 2048
+): Promise<string> {
+  let conversation = "";
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      conversation += `\nAutore: ${msg.content}\n`;
+    } else if (msg.role === 'assistant') {
+      conversation += `\nEditor AI: ${msg.content}\n`;
+    }
+  }
+  conversation += `\nEditor AI:`;
+
+  return await generateLocalAI(conversation.trim(), systemPrompt, temperature, maxTokens);
+}

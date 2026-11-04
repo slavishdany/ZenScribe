@@ -526,6 +526,10 @@ export const App: React.FC = () => {
         serverStatus={serverStatus}
         activeModelName={activeModelName}
         geminiApiKey={settings.geminiApiKey || ''}
+        currentChapterTitle={chapters.find((c) => c.id === activeChapterId)?.title}
+        currentChapterContent={editorInstance ? editorInstance.getHTML() : chapters.find((c) => c.id === activeChapterId)?.content}
+        chapters={chapters}
+        projectTitle={projectProfile.title}
         settings={settings}
         onClose={() => setIsAIPanelOpen(false)}
         onReplaceText={handleReplaceText}
