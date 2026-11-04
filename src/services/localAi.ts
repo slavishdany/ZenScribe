@@ -203,15 +203,32 @@ export async function chatWithLocalAI(
   temperature = 0.4,
   maxTokens = 2048
 ): Promise<string> {
+  const systemMessages = messages
+    .filter((m) => m.role === 'system' && m.content && m.content.trim())
+    .map((m) => m.content.trim());
+
+  let combinedSystemPrompt = [
+    systemPrompt?.trim(),
+    ...systemMessages,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  // Protezione da superamento limite di contesto per CPU locale (max ~10.000 caratteri di contesto)
+  if (combinedSystemPrompt.length > 12000) {
+    combinedSystemPrompt = combinedSystemPrompt.slice(0, 12000) + '\n\n[...Contesto sintetizzato per limiti di memoria locale...]';
+  }
+
   let conversation = "";
   for (const msg of messages) {
+    if (!msg.content || !msg.content.trim()) continue;
     if (msg.role === 'user') {
-      conversation += `\nAutore: ${msg.content}\n`;
+      conversation += `\nAutore: ${msg.content.trim()}\n`;
     } else if (msg.role === 'assistant') {
-      conversation += `\nEditor AI: ${msg.content}\n`;
+      conversation += `\nEditor AI: ${msg.content.trim()}\n`;
     }
   }
   conversation += `\nEditor AI:`;
 
-  return await generateLocalAI(conversation.trim(), systemPrompt, temperature, maxTokens);
+  return await generateLocalAI(conversation.trim(), combinedSystemPrompt || undefined, temperature, maxTokens);
 }

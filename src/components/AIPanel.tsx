@@ -152,7 +152,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     cloud: {
       activeProvider: 'gemini',
       providers: {
-        gemini: { apiKey: geminiApiKey, model: 'gemini-3.8-flash' },
+        gemini: { apiKey: geminiApiKey, model: 'gemini-1.5-flash' },
         openai: { apiKey: '', model: 'gpt-4o-mini' },
         anthropic: { apiKey: '', model: 'claude-3-5-haiku-20241022' },
         openrouter: { apiKey: '', model: 'deepseek/deepseek-chat' },
@@ -190,6 +190,15 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     groq: 'Groq LPUs',
     custom: 'Custom Server',
   };
+
+  // Adatta intelligentemente il motore chat se la chiave cloud manca ma il motore locale è attivo
+  useEffect(() => {
+    if (!hasCloudKey && serverStatus.isReady) {
+      setChatEngine('local');
+    } else if (hasCloudKey && !serverStatus.isReady) {
+      setChatEngine('cloud');
+    }
+  }, [hasCloudKey, serverStatus.isReady]);
 
   // ============================================================================
   // LOGICA CHAT EDITORIALE
@@ -280,28 +289,19 @@ Se l'autore ti chiede di 'correggere', 'revisionare', 'riscrivere', 'ripulire la
 3. Se desideri spiegare brevemente cosa hai modificato (es. 'Ho corretto la punteggiatura dei dialoghi e rimosso 3 refusi'), aggiungi la tua nota DOPO il blocco.
 In questo modo ZenScribe permetterà all'autore di applicare la correzione al manoscritto con un solo click!`;
 
+      const fullSystemPrompt = contextAttached
+        ? `${systemInstruction}\n\nECCO IL CONTESTO DELL'OPERA E DEL TESTO SU CUI LAVORARE:\n${contextAttached}`
+        : systemInstruction;
+
       // Costruzione dei messaggi formattati con contesto allegato per la chiamata
       const apiMessages: ChatMessage[] = [];
 
-      // Allega il contesto narrativo nella prima richiesta o come premessa
-      if (contextAttached) {
-        apiMessages.push({
-          role: 'system',
-          content: `${systemInstruction}\n\nECCO IL CONTESTO DELL'OPERA E DEL TESTO SU CUI LAVORARE:\n${contextAttached}`,
-        });
-      } else {
-        apiMessages.push({
-          role: 'system',
-          content: systemInstruction,
-        });
-      }
-
-      // Aggiungi la cronologia dei messaggi scambiati
+      // Aggiungi la cronologia dei messaggi scambiati validati
       for (const msg of updatedHistory) {
-        if (msg.role === 'user' || msg.role === 'assistant') {
+        if ((msg.role === 'user' || msg.role === 'assistant') && msg.content && msg.content.trim()) {
           apiMessages.push({
             role: msg.role,
-            content: msg.content,
+            content: msg.content.trim(),
           });
         }
       }
@@ -312,7 +312,7 @@ In questo modo ZenScribe permetterà all'autore di applicare la correzione al ma
             'Nessun modello AI locale attivo in memoria. Apri le impostazioni e attiva un modello GGUF oppure passa alla modalità Cloud.'
           );
         }
-        assistantReply = await chatWithLocalAI(apiMessages, systemInstruction, 0.4, 2048);
+        assistantReply = await chatWithLocalAI(apiMessages, fullSystemPrompt, 0.4, 2048);
       } else {
         if (!hasCloudKey) {
           throw new Error(
@@ -322,7 +322,7 @@ In questo modo ZenScribe permetterà all'autore di applicare la correzione al ma
         assistantReply = await chatWithCloudProvider(
           resolvedSettings.cloud,
           apiMessages,
-          systemInstruction,
+          fullSystemPrompt,
           { temperature: 0.7, maxTokens: 4096 }
         );
       }
@@ -338,6 +338,9 @@ In questo modo ZenScribe permetterà all'autore di applicare la correzione al ma
       setChatMessages((prev) => [...prev, assistantMessage]);
     } catch (err: any) {
       console.error('[AIPanel Chat Error]', err);
+      // Rimuoviamo il messaggio utente senza risposta per non corrompere l'alternanza multi-turn
+      setChatMessages((prev) => prev.filter((m) => m.id !== userMessageId));
+      setChatInput(textToSend);
       setChatError(err.message || 'Si è verificato un errore durante la risposta.');
     } finally {
       setChatLoading(false);

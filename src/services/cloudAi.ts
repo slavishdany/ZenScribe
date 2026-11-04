@@ -24,10 +24,16 @@ export async function chatWithCloudProvider(
   const providerType = cloudSettings.activeProvider;
   const config = cloudSettings.providers[providerType];
 
-  const effectiveSystemInstruction =
-    systemInstruction ||
-    options.systemInstruction ||
-    "Sei un assistente editoriale e creativo per scrittori di narrativa. Aiuta l'autore a sviluppare la storia rispettando fedelmente il genere, il tono, il punto di vista e le regole del mondo fornite.";
+  const systemMessagesFromChat = messages
+    .filter((m) => m.role === "system" && m.content && m.content.trim())
+    .map((m) => m.content.trim());
+
+  const effectiveSystemInstruction = [
+    systemInstruction || options.systemInstruction || "Sei un assistente editoriale e creativo per scrittori di narrativa. Aiuta l'autore a sviluppare la storia rispettando fedelmente il genere, il tono, il punto di vista e le regole del mondo fornite.",
+    ...systemMessagesFromChat,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   if (!config.apiKey && providerType !== "custom") {
     throw new Error(
@@ -38,29 +44,46 @@ export async function chatWithCloudProvider(
   switch (providerType) {
     case "gemini": {
       const genAI = new GoogleGenerativeAI(config.apiKey);
-      let primaryModel = config.model || "gemini-3.8-flash";
-      if (primaryModel.includes("2.0") || primaryModel.includes("2.5") || !primaryModel.trim()) {
-        primaryModel = "gemini-3.8-flash";
+      let primaryModel = config.model || "gemini-1.5-flash";
+      if (primaryModel.includes("3.8") || !primaryModel.trim()) {
+        primaryModel = "gemini-1.5-flash";
       }
 
-      // Modelli candidati in ordine di priorità: fallback se 503
+      // Modelli candidati in ordine di priorità: fallback automatico
       const candidateModels = [
         primaryModel,
-        primaryModel !== "gemini-1.5-flash" ? "gemini-1.5-flash" : "gemini-3.8-flash",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash",
         "gemini-1.5-pro",
       ].filter((m, i, arr) => arr.indexOf(m) === i);
 
       // In Gemini API i ruoli accettati nei contents sono 'user' e 'model'
-      const contents = messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({
-          role: m.role === "assistant" ? "model" : "user",
-          parts: [{ text: m.content }],
-        }));
+      // I messaggi devono rigorosamente alternarsi (user -> model -> user -> model)
+      const sanitizedContents: Array<{ role: "user" | "model"; parts: [{ text: string }] }> = [];
+      
+      const turnMessages = messages.filter(
+        (m) => (m.role === "user" || m.role === "assistant") && m.content && m.content.trim()
+      );
 
-      // Se non ci sono messaggi validi, fallback di sicurezza
-      if (contents.length === 0) {
-        throw new Error("Nessun messaggio fornito per l'elaborazione.");
+      for (const m of turnMessages) {
+        const role: "user" | "model" = m.role === "assistant" ? "model" : "user";
+        if (sanitizedContents.length > 0 && sanitizedContents[sanitizedContents.length - 1].role === role) {
+          sanitizedContents[sanitizedContents.length - 1].parts[0].text += `\n\n${m.content.trim()}`;
+        } else {
+          sanitizedContents.push({
+            role,
+            parts: [{ text: m.content.trim() }],
+          });
+        }
+      }
+
+      // Rimuovi eventuali messaggi model iniziali (Gemini richiede che il primo turno sia 'user')
+      while (sanitizedContents.length > 0 && sanitizedContents[0].role !== "user") {
+        sanitizedContents.shift();
+      }
+
+      if (sanitizedContents.length === 0) {
+        throw new Error("Nessun messaggio valido fornito per l'elaborazione.");
       }
 
       let lastError: any = null;
@@ -73,7 +96,7 @@ export async function chatWithCloudProvider(
           });
 
           const result = await model.generateContent({
-            contents,
+            contents: sanitizedContents,
             generationConfig: {
               temperature: options.temperature ?? 0.7,
               maxOutputTokens: options.maxTokens ?? 8192,
@@ -87,7 +110,7 @@ export async function chatWithCloudProvider(
           const errMsg = err?.message || String(err);
 
           // Se l'errore è un 503 o 404, prova con modello di riserva
-          if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("404")) {
+          if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("404") || errMsg.includes("not found")) {
             console.warn(`[Gemini] Modello '${modelToTry}' sovraccarico o non disponibile (${errMsg}). Tentativo con modello fallback...`);
             await new Promise((res) => setTimeout(res, 800));
             continue;
@@ -180,9 +203,27 @@ export async function chatWithCloudProvider(
       const baseUrl = config.baseUrl || "https://api.anthropic.com/v1";
       const endpoint = `${baseUrl.replace(/\/+$/, "")}/messages`;
 
-      const anthropicMessages = messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+      const turnMessages = messages.filter(
+        (m) => (m.role === "user" || m.role === "assistant") && m.content && m.content.trim()
+      );
+
+      const anthropicMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
+      for (const m of turnMessages) {
+        const role = m.role as "user" | "assistant";
+        if (anthropicMessages.length > 0 && anthropicMessages[anthropicMessages.length - 1].role === role) {
+          anthropicMessages[anthropicMessages.length - 1].content += `\n\n${m.content.trim()}`;
+        } else {
+          anthropicMessages.push({ role, content: m.content.trim() });
+        }
+      }
+
+      while (anthropicMessages.length > 0 && anthropicMessages[0].role !== "user") {
+        anthropicMessages.shift();
+      }
+
+      if (anthropicMessages.length === 0) {
+        throw new Error("Nessun messaggio valido fornito per Claude.");
+      }
 
       const response = await fetch(endpoint, {
         method: "POST",
