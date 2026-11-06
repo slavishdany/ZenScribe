@@ -211,6 +211,11 @@ export const AIPanel: React.FC<AIPanelProps> = ({
       case 'selection':
         if (selectedText.trim()) {
           contextStr = `=== TESTO / PARAGRAFO SELEZIONATO DALL'AUTORE NELL'EDITOR ===\n"""\n${selectedText.trim()}\n"""\n`;
+        } else {
+          const cleanContent = stripHtml(currentChapterContent || '');
+          if (cleanContent.trim()) {
+            contextStr = `=== TESTO INTEGRALE DEL CAPITOLO CORRENTE ("${currentChapterTitle || 'Senza titolo'}") ===\n"""\n${cleanContent}\n"""\n`;
+          }
         }
         if (narrativeBible.trim()) {
           contextStr += `\n${narrativeBible.trim()}`;
@@ -219,7 +224,14 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 
       case 'chapter':
         const cleanContent = stripHtml(currentChapterContent || '');
-        contextStr = `=== TESTO INTEGRALE DEL CAPITOLO CORRENTE ("${currentChapterTitle || 'Senza titolo'}") ===\n"""\n${cleanContent}\n"""\n`;
+        if (cleanContent.trim()) {
+          contextStr = `=== TESTO INTEGRALE DEL CAPITOLO CORRENTE ("${currentChapterTitle || 'Senza titolo'}") ===\n"""\n${cleanContent}\n"""\n`;
+        } else {
+          const validChapters = chapters.filter((c) => stripHtml(c.content).trim());
+          if (validChapters.length > 0) {
+            contextStr = `=== TESTO DEL MANOSCRITTO (${validChapters.length} CAPITOLI DISPONIBILI) ===\n\n${validChapters.map((c) => `--- ${c.title} ---\n${stripHtml(c.content)}`).join('\n\n')}\n`;
+          }
+        }
         if (narrativeBible.trim()) {
           contextStr += `\n${narrativeBible.trim()}`;
         }
@@ -277,15 +289,20 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 Il tuo compito è dialogare con l'autore, analizzare brani e capitoli, dare pareri costruttivi sul ritmo, dialoghi, suspense e stile, e risolvere blocchi creativi.
 Rispondi in italiano con uno stile stimolante, empatico, analitico e letterario.
 
-DIRETTIVA ESSENZIALE PER CORREZIONI, REVISIONI ED EDITING DEL TESTO:
+REGOLA FONDAMENTALE SULL'ACCESSO AL TESTO:
+Tu HAI GIÀ ACCESSO DIRETTO al testo dell'opera e del capitolo fornito qui di seguito nel contesto.
+NON dire MAI "non posso accedere ai tuoi file", "non ho accesso alla tua area di testo", "non posso modificare i file" o "è impossibile".
 Se l'autore ti chiede di 'correggere', 'revisionare', 'riscrivere', 'ripulire la punteggiatura o l'ortografia' del testo in esame, del capitolo o del manoscritto:
-1. Fornisci SEMPRE il testo corretto/revisionato COMPLETO pronto all'uso.
-2. Racchiudi la versione corretta pronta per l'applicazione all'interno di un blocco ben delimitato:
+1. Esegui la correzione DIRETTAMENTE sul testo fornito nel contesto.
+2. Fornisci SEMPRE il testo corretto/revisionato COMPLETO pronto all'uso.
+3. Racchiudi la versione corretta pronta per l'applicazione all'interno di un blocco ben delimitato:
 \`\`\`testo-revisionato
 [Inserisci qui l'intero testo corretto e pronto per essere salvato nel capitolo dell'autore]
 \`\`\`
-3. Se desideri spiegare brevemente cosa hai modificato (es. 'Ho corretto la punteggiatura dei dialoghi e rimosso 3 refusi'), aggiungi la tua nota DOPO il blocco.
-In questo modo ZenScribe permetterà all'autore di applicare la correzione al manoscritto con un solo click!`;
+4. Se desideri spiegare brevemente cosa hai modificato (es. 'Ho corretto la punteggiatura dei dialoghi e rimosso 3 refusi'), aggiungi la tua nota DOPO il blocco.
+In questo modo ZenScribe permetterà all'autore di applicare la correzione al manoscritto con un solo click!
+
+Se il testo fornito nel contesto è vuoto, avvisa con cortesia l'autore invitandolo a scrivere qualcosa nel capitolo o a selezionare un paragrafo nell'editor.`;
 
       const fullSystemPrompt = contextAttached
         ? `${systemInstruction}\n\nECCO IL CONTESTO DELL'OPERA E DEL TESTO SU CUI LAVORARE:\n${contextAttached}`

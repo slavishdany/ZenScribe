@@ -400,14 +400,34 @@ pub async fn download_model_file<R: Runtime>(
     fs::rename(&part_path, &target_path)
         .map_err(|e| format!("Impossibile finalizzare il file scaricato: {}", e))?;
 
-    // Tentativo opzionale di scaricare tokenizer.json companion se presente
-    let tokenizer_url = format!("https://huggingface.co/{}/resolve/main/tokenizer.json", repo_id);
+    // Tentativo di scaricare tokenizer.json companion (da repo o mirror ufficiale architettura)
+    let candidate_tok_urls = vec![
+        format!("https://huggingface.co/{}/resolve/main/tokenizer.json", repo_id),
+        if filename.to_lowercase().contains("llama-3") {
+            "https://huggingface.co/NousResearch/Hermes-3-Llama-3.2-3B/resolve/main/tokenizer.json".to_string()
+        } else if filename.to_lowercase().contains("qwen") {
+            "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/resolve/main/tokenizer.json".to_string()
+        } else if filename.to_lowercase().contains("mistral") {
+            "https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3/resolve/main/tokenizer.json".to_string()
+        } else if filename.to_lowercase().contains("phi") {
+            "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct/resolve/main/tokenizer.json".to_string()
+        } else {
+            "https://huggingface.co/NousResearch/Hermes-3-Llama-3.2-3B/resolve/main/tokenizer.json".to_string()
+        },
+    ];
+
     let companion_tokenizer = models_dir.join(format!("{}.tokenizer.json", filename));
-    if let Ok(tok_resp) = client.get(&tokenizer_url).send().await {
-        if tok_resp.status().is_success() {
-            if let Ok(bytes) = tok_resp.bytes().await {
-                let _ = fs::write(&companion_tokenizer, bytes);
-                println!("[ZenScribe] Tokenizer.json companion salvato con successo.");
+    for tok_url in candidate_tok_urls {
+        if companion_tokenizer.exists() {
+            break;
+        }
+        if let Ok(tok_resp) = client.get(&tok_url).send().await {
+            if tok_resp.status().is_success() {
+                if let Ok(bytes) = tok_resp.bytes().await {
+                    let _ = fs::write(&companion_tokenizer, bytes);
+                    println!("[ZenScribe] Tokenizer.json companion salvato con successo da {}", tok_url);
+                    break;
+                }
             }
         }
     }

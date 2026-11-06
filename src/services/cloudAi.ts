@@ -43,7 +43,8 @@ export async function chatWithCloudProvider(
 
   switch (providerType) {
     case "gemini": {
-      const genAI = new GoogleGenerativeAI(config.apiKey);
+      const cleanApiKey = config.apiKey.trim();
+      const genAI = new GoogleGenerativeAI(cleanApiKey);
       let primaryModel = config.model || "gemini-1.5-flash";
       if (primaryModel.includes("3.8") || !primaryModel.trim()) {
         primaryModel = "gemini-1.5-flash";
@@ -118,6 +119,60 @@ export async function chatWithCloudProvider(
 
           throw err;
         }
+      }
+
+      // Se tutti i modelli candidati hanno restituito 404, effettua una diagnostica dell'account Google AI Studio
+      if (lastError?.message?.includes("404") || lastError?.message?.includes("not found")) {
+        try {
+          const listResp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanApiKey}`
+          );
+          if (!listResp.ok) {
+            let errorDetail = "";
+            try {
+              const errData = await listResp.json();
+              errorDetail = errData.error?.message || JSON.stringify(errData);
+            } catch {}
+            throw new Error(
+              `Errore di autenticazione Google AI (${listResp.status}): ${errorDetail || "Chiave API non valida o servizio Generative Language non abilitato"}. Verifica la tua chiave su https://aistudio.google.com/app/apikey`
+            );
+          }
+          const listData = await listResp.json();
+          const validModels = (listData.models || [])
+            .filter((m: any) => m.supportedGenerationMethods?.includes("generateContent"))
+            .map((m: any) => m.name.replace(/^models\//, ""));
+
+          if (validModels.length > 0) {
+            console.warn(`[Gemini] Modelli supportati rilevati per la tua chiave:`, validModels);
+            for (const dynamicModel of validModels) {
+              try {
+                const model = genAI.getGenerativeModel({
+                  model: dynamicModel,
+                  systemInstruction: effectiveSystemInstruction,
+                });
+                const result = await model.generateContent({
+                  contents: sanitizedContents,
+                  generationConfig: {
+                    temperature: options.temperature ?? 0.7,
+                    maxOutputTokens: options.maxTokens ?? 8192,
+                  },
+                });
+                const response = await result.response;
+                return response.text();
+              } catch {
+                continue;
+              }
+            }
+          }
+        } catch (diagErr: any) {
+          if (diagErr?.message?.includes("Google AI")) {
+            throw diagErr;
+          }
+        }
+
+        throw new Error(
+          "I modelli Gemini specificati non risultano abilitati per questa chiave API Google. Verifica di avere generato la chiave gratuita su https://aistudio.google.com/app/apikey con l'API Generative Language abilitata."
+        );
       }
 
       if (lastError?.message?.includes("503") || lastError?.message?.includes("high demand")) {

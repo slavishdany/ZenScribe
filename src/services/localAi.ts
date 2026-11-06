@@ -219,16 +219,24 @@ export async function chatWithLocalAI(
     combinedSystemPrompt = combinedSystemPrompt.slice(0, 12000) + '\n\n[...Contesto sintetizzato per limiti di memoria locale...]';
   }
 
+  const validDialogue = messages.filter(
+    (m) => (m.role === 'user' || m.role === 'assistant') && m.content && m.content.trim()
+  );
+
   let conversation = "";
-  for (const msg of messages) {
-    if (!msg.content || !msg.content.trim()) continue;
-    if (msg.role === 'user') {
-      conversation += `\nAutore: ${msg.content.trim()}\n`;
-    } else if (msg.role === 'assistant') {
-      conversation += `\nEditor AI: ${msg.content.trim()}\n`;
+  if (validDialogue.length === 1 && validDialogue[0].role === 'user') {
+    // Singolo messaggio utente: invialo direttamente come prompt pulito per la massima aderenza alle istruzioni del modello
+    conversation = validDialogue[0].content.trim();
+  } else {
+    for (const msg of validDialogue) {
+      if (msg.role === 'user') {
+        conversation += `\nAutore: ${msg.content.trim()}\n`;
+      } else if (msg.role === 'assistant') {
+        conversation += `\nEditor AI: ${msg.content.trim()}\n`;
+      }
     }
+    conversation += `\nEditor AI:`;
   }
-  conversation += `\nEditor AI:`;
 
   return await generateLocalAI(conversation.trim(), combinedSystemPrompt || undefined, temperature, maxTokens);
 }

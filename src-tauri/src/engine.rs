@@ -51,7 +51,13 @@ impl NativeEngine {
     pub fn is_ready(&self) -> bool {
         self.loaded_engine
             .lock()
-            .map(|guard| guard.is_some())
+            .map(|guard| {
+                if let Some(ref e) = *guard {
+                    e.tokenizer.is_some()
+                } else {
+                    false
+                }
+            })
             .unwrap_or(false)
     }
 
