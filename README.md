@@ -31,10 +31,12 @@ ZenScribe nasce per eliminare ogni distrazione visiva e restituire al pensiero l
 - **Smart Caching**: i modelli scaricati vengono archiviati nella cartella protetta locale (`AppData` su Windows). Se il modello è già presente, il download viene saltato e l'attivazione è istantanea.
 - **Zero fuga di dati**: i tuoi testi non lasciano mai il computer.
 
-#### ☁️ Fase 2: Cloud Creativo (Google Gemini)
-- **Continua la Narrazione**: suggerisce il proseguimento naturale del racconto mantenendo tono e ritmo.
-- **Espandi & Arricchisci**: sviluppa descrizioni sensoriali, atmosfere o introspezioni psicologiche.
-- **Gratuito con la tua chiave**: utilizza le API di *Google AI Studio* con il modello ultra-veloce Gemini 2.5 Flash. La tua chiave rimane memorizzata esclusivamente in locale.
+#### ☁️ Fase 2: Barra Laterale AI & Co-Autore Creativo (Chat dell'Opera & Cloud)
+- **Barra Laterale Affiancata (Zero Popup Ostacolanti)**: l'assistente si apre come una elegante sidebar laterale a destra dell'editor. Puoi continuare a scrivere, consultare i capitoli e dialogare con l'editor AI contemporaneamente!
+- **Chat sul Libro con Contesto Globale**: parla della storia con un co-autore che ha accesso all'intero manoscritto, all'indice dei capitoli e alla Bibbia narrativa (personaggi, luoghi e relazioni).
+- **Contatore Token in Tempo Reale**: indicatore dinamico dei token attivi nel contesto per avere sempre sotto controllo la spesa delle API.
+- **Revisioni One-Click**: correggi refusi o riscrivi brani applicandoli istantaneamente all'intero capitolo o alla selezione.
+- **Gratuito con la tua chiave**: utilizza le API di *Google AI Studio* con i modelli Gemini 1.5 Flash e 2.0 Flash (o Claude, GPT-4o, DeepSeek). La tua chiave rimane memorizzata esclusivamente in locale.
 
 ---
 
@@ -93,8 +95,10 @@ L'eseguibile compilato e il programma di installazione si troveranno in `src-tau
 
 ---
 
-## 🔑 Configurazione Gemini API (Opzionale per il Cloud)
+## 🔑 Configurazione Gemini API & Stima dei Costi
 
 1. Ottieni gratuitamente una chiave API su [Google AI Studio](https://aistudio.google.com/app/apikey).
 2. Apri le **Impostazioni** di ZenScribe (icona ingranaggio nella barra di stato in basso).
 3. Incolla la chiave nella sezione *Google Gemini (Cloud)* e salva.
+
+> 💰 **Valutazione Economica & Token:** Consulta la guida dettagliata [COSTI_API.md](COSTI_API.md) per l'analisi completa dei costi per capitolo, stima token in lingua italiana, confronto tra provider (Gemini, Claude, GPT, DeepSeek, Locale) e trucchi per scrivere gratis.

@@ -345,15 +345,15 @@ export async function continueWritingCreative(
 ): Promise<string> {
   const prompt = `${
     narrativeContext && narrativeContext.trim()
-      ? `Ecco le indicazioni e il contesto del romanzo:\n${narrativeContext.trim()}\n\n`
+      ? `=== INDICAZIONI, PROFILO & BIBBIA DEL ROMANZO ===\n${narrativeContext.trim()}\n\n`
       : ""
-  }Ecco il testo scritto finora dall'autore:\n"""\n${contextText}\n"""\n\nContinua la narrazione in modo coerente e coinvolgente con 2-3 paragrafi naturali. Fornisci direttamente la continuazione:`;
+  }=== TESTO DEL MANOSCRITTO SCRITTO FINORA DALL'AUTORE ===\n"""\n${contextText}\n"""\n\nDirettiva: Continua la narrazione da dove si interrompe in modo completamente fluido e organico per 2 o 3 paragrafi naturali. Rispetta rigorosamente la voce narrante (POV), il tono e la credibilità psicologica dei personaggi. Non inserire commenti introduttivi né saluti: fornisci direttamente la prosa narrativa da inserire nell'opera:`;
 
   return generateWithCloudProvider(settings.cloud, prompt, {
     maxTokens: 4096,
     temperature: 0.7,
     systemInstruction:
-      "Sei un romanziere e ghostwriter professionista. Mantieni rigorosamente lo stile narrativo, la voce del protagonista, il registro e il genere specificati nel contesto del romanzo.",
+      "Sei un romanziere e co-autore professionista. Scrivi con precisione sensoriale, ritmo avvincente e perfetto adempimento della voce narrativa e del registro dell'opera. Non usare formule di apertura o chiusura: scrivi direttamente il testo della storia.",
   });
 }
 
@@ -367,13 +367,15 @@ export async function expandConceptCreative(
 ): Promise<string> {
   const prompt = `${
     narrativeContext && narrativeContext.trim()
-      ? `Contesto e stile del romanzo:\n${narrativeContext.trim()}\n\n`
+      ? `=== PROFILO DELL'OPERA & REGOLE DEL MONDO ===\n${narrativeContext.trim()}\n\n`
       : ""
-  }Espandi e arricchisci questo passaggio narrativo/concettuale con dettagli sensoriali, sfumature psicologiche o un'ambientazione più vivida, rispettando lo stile e le regole del mondo:\n"""\n${selectedText}\n"""`;
+  }=== PASSAGGIO DA ESPANDERE ===\n"""\n${selectedText}\n"""\n\nDirettiva: Espandi e approfondisci questo passaggio narrativo/descrittivo. Arricchiscilo con dettagli sensoriali (suoni, odori, luce), introspezione o sfumature psicologiche senza appesantire il ritmo. Applica il principio 'show, don't tell'. Fornisci direttamente il passaggio espanso pronto per l'editor:`;
 
   return generateWithCloudProvider(settings.cloud, prompt, {
     maxTokens: 4096,
     temperature: 0.7,
+    systemInstruction:
+      "Sei uno stilista della prosa e story editor. Aiuti l'autore a dare tridimensionalità, densità sensoriale e atmosfera alle scene, preservando intatto il tono dell'opera.",
   });
 }
 

@@ -760,9 +760,21 @@ export async function ottieniContestoNarrativo(projectId?: string): Promise<stri
     const mappa = await ottieniMappaConcettuale(projId);
     if (mappa.nodes.length > 0) {
       const bLines: string[] = [];
-      bLines.push("=== BIBBIA DEL ROMANZO (PERSONAGGI & LUOGHI) ===");
+      bLines.push("=== BIBBIA DEL ROMANZO (PERSONAGGI, LUOGHI & LORE) ===");
+      const nodeNameMap = new Map<string, string>();
       for (const n of mappa.nodes) {
-        bLines.push(`• [${n.type.toUpperCase()}] ${n.name}: ${n.description}`);
+        nodeNameMap.set(n.id, n.name);
+        const details = n.description ? `: ${n.description}` : '';
+        bLines.push(`• [${n.type.toUpperCase()}] ${n.name}${details}`);
+      }
+
+      if (mappa.edges && mappa.edges.length > 0) {
+        bLines.push("\n--- Relazioni tra Personaggi & Dinamiche Narrative ---");
+        for (const e of mappa.edges) {
+          const srcName = nodeNameMap.get(e.source) || e.source;
+          const trgName = nodeNameMap.get(e.target) || e.target;
+          bLines.push(`• ${srcName} ──(${e.label || 'collegato a'})──> ${trgName}`);
+        }
       }
       sections.push(bLines.join("\n"));
     }

@@ -30,6 +30,7 @@ interface EditorToolbarProps {
   onWidthChange: (width: EditorWidth) => void;
   onThemeToggle: () => void;
   onOpenAIPanel: () => void;
+  isAIPanelOpen?: boolean;
   onToggleChapters?: () => void;
   onOpenWorldbuilding?: () => void;
   onOpenProjectProfile?: () => void;
@@ -50,6 +51,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   onWidthChange,
   onThemeToggle,
   onOpenAIPanel,
+  isAIPanelOpen = false,
   onToggleChapters,
   onOpenWorldbuilding,
   onOpenProjectProfile,
@@ -334,11 +336,15 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
         </button>
 
-        {/* Assistente AI ZenScribe */}
+        {/* Assistente AI ZenScribe (Barra Laterale) */}
         <button
           onClick={onOpenAIPanel}
-          className="flex items-center space-x-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-3 py-1.5 rounded-lg shadow-sm transition-colors"
-          title="Assistente AI (Locale + Cloud Multi-Provider)"
+          className={`flex items-center space-x-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all ${
+            isAIPanelOpen
+              ? 'bg-indigo-700 text-white shadow-inner ring-2 ring-indigo-400/50'
+              : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
+          }`}
+          title={isAIPanelOpen ? "Chiudi Barra Laterale AI" : "Apri Barra Laterale AI (Chat sul Libro & Strumenti)"}
         >
           <Sparkles className="w-3.5 h-3.5" />
           <span>Assistente AI</span>
