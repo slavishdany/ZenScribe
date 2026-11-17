@@ -104,36 +104,57 @@ pub fn sanitize_filename(name: &str) -> String {
 
 /// Apre la finestra di dialogo nativa per selezionare una cartella sul computer
 pub async fn pick_folder_dialog() -> Option<String> {
-    let folder = rfd::AsyncFileDialog::new()
-        .set_title("Seleziona la cartella per l'esportazione / backup del Progetto ZenScribe")
-        .pick_folder()
-        .await;
+    #[cfg(target_os = "android")]
+    {
+        None
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let folder = rfd::AsyncFileDialog::new()
+            .set_title("Seleziona la cartella per l'esportazione / backup del Progetto ZenScribe")
+            .pick_folder()
+            .await;
 
-    folder.map(|f| f.path().to_string_lossy().to_string())
+        folder.map(|f| f.path().to_string_lossy().to_string())
+    }
 }
 
 /// Apre la finestra di dialogo nativa per selezionare un file manifest (.json)
 pub async fn pick_manifest_file_dialog() -> Option<String> {
-    let file = rfd::AsyncFileDialog::new()
-        .set_title("Seleziona il file indice di backup ZenScribe (zenscribe.manifest.json)")
-        .add_filter("ZenScribe Manifest", &["json"])
-        .pick_file()
-        .await;
+    #[cfg(target_os = "android")]
+    {
+        None
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let file = rfd::AsyncFileDialog::new()
+            .set_title("Seleziona il file indice di backup ZenScribe (zenscribe.manifest.json)")
+            .add_filter("ZenScribe Manifest", &["json"])
+            .pick_file()
+            .await;
 
-    file.map(|f| f.path().to_string_lossy().to_string())
+        file.map(|f| f.path().to_string_lossy().to_string())
+    }
 }
 
 /// Apre la finestra di dialogo nativa per selezionare un file di trama, testo (.txt, .md) o manifest (.json)
 pub async fn pick_import_file_dialog() -> Option<String> {
-    let file = rfd::AsyncFileDialog::new()
-        .set_title("Seleziona file di trama, testo o backup ZenScribe")
-        .add_filter("Tutti i formati supportati (*.txt, *.md, *.json)", &["txt", "md", "json"])
-        .add_filter("Trame & Documenti di Testo (*.txt, *.md)", &["txt", "md"])
-        .add_filter("ZenScribe Manifest (*.json)", &["json"])
-        .pick_file()
-        .await;
+    #[cfg(target_os = "android")]
+    {
+        None
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let file = rfd::AsyncFileDialog::new()
+            .set_title("Seleziona file di trama, testo o backup ZenScribe")
+            .add_filter("Tutti i formati supportati (*.txt, *.md, *.json)", &["txt", "md", "json"])
+            .add_filter("Trame & Documenti di Testo (*.txt, *.md)", &["txt", "md"])
+            .add_filter("ZenScribe Manifest (*.json)", &["json"])
+            .pick_file()
+            .await;
 
-    file.map(|f| f.path().to_string_lossy().to_string())
+        file.map(|f| f.path().to_string_lossy().to_string())
+    }
 }
 
 /// Legge il contenuto testuale di qualsiasi file da percorso specificato
@@ -331,14 +352,22 @@ pub fn read_manifest_from_path(path_str: &str) -> Result<String, String> {
 
 /// Apre la finestra di dialogo nativa "Salva con nome" per esportare un file
 pub async fn save_file_dialog(default_name: &str, extension: &str) -> Option<String> {
-    let file = rfd::AsyncFileDialog::new()
-        .set_title("Esporta file")
-        .set_file_name(default_name)
-        .add_filter(extension.to_uppercase(), &[extension])
-        .save_file()
-        .await;
+    #[cfg(target_os = "android")]
+    {
+        let _ = (default_name, extension);
+        None
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let file = rfd::AsyncFileDialog::new()
+            .set_title("Esporta file")
+            .set_file_name(default_name)
+            .add_filter(extension.to_uppercase(), &[extension])
+            .save_file()
+            .await;
 
-    file.map(|f| f.path().to_string_lossy().to_string())
+        file.map(|f| f.path().to_string_lossy().to_string())
+    }
 }
 
 /// Apre la cartella in Esplora File di Windows
@@ -370,6 +399,11 @@ pub fn open_folder_in_system_explorer(folder_path: &str) -> Result<(), String> {
             .arg(folder_path)
             .spawn()
             .map_err(|e| format!("Impossibile aprire il file manager: {}", e))?;
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let _ = folder_path;
     }
 
     Ok(())

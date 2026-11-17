@@ -160,8 +160,8 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
   };
 
   return (
-    <main className={`flex-1 overflow-y-auto px-6 sm:px-12 py-10 sm:py-16 flex justify-center transition-all duration-300 ${
-      zenMode ? 'py-16 sm:py-24' : ''
+    <main className={`flex-1 overflow-y-auto px-4 sm:px-12 py-6 sm:py-16 flex justify-center transition-all duration-300 ${
+      zenMode ? 'py-10 sm:py-24' : ''
     }`}>
       <div
         className={`w-full ${getWidthClass(width)} ${getFontFamily(font)} transition-all duration-200`}

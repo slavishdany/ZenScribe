@@ -40,3 +40,14 @@ ZenScribe è un harness di videoscrittura minimale, privato e ibrido (Locale + C
 - `reqwest`: v0.12 (Download asincrono con rustls e streaming chunk)
 - `tokio`: v1
 - `rfd`: v0.15 (Dialoghi nativi file/cartelle OS)
+
+## 6. ASSISTENTE AI DOCKED, CHAT SUL LIBRO & COSTI API
+- **Layout a Barra Laterale Docked:** L'assistente AI (`AIPanel.tsx`) opera come una barra laterale agganciata a destra dell'editor (`ZenEditor.tsx`) senza modali oscuranti. L'autore può continuare la stesura e consultare l'AI in contemporanea.
+- **Iniezione del Contesto Multi-Livello:**
+  - *Tutto il Libro (`manuscript`):* Indice capitoli, conteggio parole, testo completo dei capitoli con sincronizzazione istantanea del capitolo aperto, profilo narrativo e Bibbia con relazioni tra personaggi (`edges`).
+  - *Capitolo Attivo (`chapter`):* Testo integrale del capitolo in lavorazione, profilo e personaggi.
+  - *Selezione (`selection`):* Testo evidenziato dall'autore nell'editor.
+  - *Bibbia (`bible`):* Schede entità e mappa concettuale.
+  - *Libero (`none`):* Puro brainstorming senza testo di capitoli.
+- **Contatore Token & Stima Spesa:** Calcolo dinamico in tempo reale dei token scambiati e stima della tariffa per richiesta.
+- **Guida ai Costi:** Per il dettaglio completo sui costi per capitolo e libro, consultare [COSTI_API.md](COSTI_API.md).
