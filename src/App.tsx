@@ -35,6 +35,7 @@ import {
   getActiveProjectId,
   setActiveProjectId,
   esportaSnapshotProgetto,
+  markdownToEditorHtml,
 } from './services/db';
 import {
   selectProjectFolder,
@@ -375,6 +376,23 @@ export const App: React.FC = () => {
     editorInstance.chain().focus().insertContent(`\n\n${newText}`).run();
   };
 
+  // Sostituisce l'intero contenuto del capitolo attivo nell'editor e nel database SQLite
+  const handleReplaceChapterContent = async (newContent: string) => {
+    if (!editorInstance) return;
+    const htmlContent = markdownToEditorHtml(newContent);
+    editorInstance.commands.setContent(htmlContent, true);
+
+    const activeChap = chapters.find((c) => c.id === activeChapterId);
+    if (activeChap) {
+      const firstLine = editorInstance.getText().split('\n').find((l) => l.trim() !== '') ?? '';
+      const title = activeChap.title || firstLine.trim().slice(0, 80) || 'Capitolo';
+      await salvaCapitolo(activeChap.id, title, htmlContent);
+      setChapters((prev) =>
+        prev.map((c) => (c.id === activeChap.id ? { ...c, content: htmlContent } : c))
+      );
+    }
+  };
+
   // Seleziona cartella di backup su disco
   const handleSelectProjectFolder = async () => {
     const selected = await selectProjectFolder();
@@ -436,12 +454,16 @@ export const App: React.FC = () => {
         onExportSnapshot={handleExportSnapshot}
         onExportChapter={handleExportChapter}
         onExportManuscript={handleExportManuscript}
+        isAIPanelOpen={isAIPanelOpen}
         onOpenAIPanel={() => {
-          if (editorInstance) {
-            const { from, to } = editorInstance.state.selection;
-            const text = from !== to ? editorInstance.state.doc.textBetween(from, to, ' ') : '';
-            handleOpenAIWithSelection(text);
+          if (isAIPanelOpen) {
+            setIsAIPanelOpen(false);
           } else {
+            if (editorInstance) {
+              const { from, to } = editorInstance.state.selection;
+              const text = from !== to ? editorInstance.state.doc.textBetween(from, to, ' ') : '';
+              if (text) setAiSelectedText(text);
+            }
             setIsAIPanelOpen(true);
           }
         }}
@@ -478,27 +500,53 @@ export const App: React.FC = () => {
         onExportManuscript={handleExportManuscript}
       />
 
-      {/* Editor Centrale: salvataggio istantaneo su SQLite ad ogni battitura */}
-      <ZenEditor
-        activeChapterId={activeChapterId}
-        font={settings.font}
-        fontSize={settings.fontSize}
-        lineHeight={settings.lineHeight}
-        width={settings.width}
-        zenMode={settings.zenMode}
-        onUpdateCounts={(words, characters) => {
-          setWordCount(words);
-          setCharacterCount(characters);
-        }}
-        onEditorReady={(editor) => setEditorInstance(editor)}
-        onOpenAIWithSelection={handleOpenAIWithSelection}
-        onChapterSaved={() => {
-          // Quando un capitolo viene salvato su SQLite, aggiorna il contatore nella lista
-          elencaCapitoli(activeProjectId).then((list) => {
-            if (list) setChapters(list);
-          });
-        }}
-      />
+      {/* Area di Lavoro: Editor Centrale affiancato alla Barra Laterale AI */}
+      <div className="flex-1 flex flex-row overflow-hidden relative">
+        <ZenEditor
+          activeChapterId={activeChapterId}
+          font={settings.font}
+          fontSize={settings.fontSize}
+          lineHeight={settings.lineHeight}
+          width={settings.width}
+          zenMode={settings.zenMode}
+          onUpdateCounts={(words, characters) => {
+            setWordCount(words);
+            setCharacterCount(characters);
+          }}
+          onEditorReady={(editor) => setEditorInstance(editor)}
+          onOpenAIWithSelection={handleOpenAIWithSelection}
+          onChapterSaved={() => {
+            // Quando un capitolo viene salvato su SQLite, aggiorna il contatore nella lista
+            elencaCapitoli(activeProjectId).then((list) => {
+              if (list) setChapters(list);
+            });
+          }}
+        />
+
+        {/* Barra Laterale Assistente AI (Docked a destra, sempre consultabile durante la stesura) */}
+        {isAIPanelOpen && !settings.zenMode && (
+          <AIPanel
+            isOpen={isAIPanelOpen}
+            selectedText={aiSelectedText}
+            serverStatus={serverStatus}
+            activeModelName={activeModelName}
+            geminiApiKey={settings.geminiApiKey || ''}
+            currentChapterTitle={chapters.find((c) => c.id === activeChapterId)?.title}
+            currentChapterContent={editorInstance ? editorInstance.getHTML() : chapters.find((c) => c.id === activeChapterId)?.content}
+            chapters={chapters}
+            projectTitle={projectProfile.title}
+            projectProfile={projectProfile}
+            settings={settings}
+            onClose={() => setIsAIPanelOpen(false)}
+            onReplaceText={handleReplaceText}
+            onReplaceChapterContent={handleReplaceChapterContent}
+            onInsertAfter={handleInsertAfter}
+            onOpenSettings={() => {
+              setIsSettingsOpen(true);
+            }}
+          />
+        )}
+      </div>
 
       {/* Barra di Stato Inferiore */}
       <StatusBar
@@ -517,23 +565,6 @@ export const App: React.FC = () => {
           setIsSettingsOpen(true);
         }}
         onRefreshServer={verifyServer}
-      />
-
-      {/* Pannello Assistente AI (Locale Nativo + Cloud Multi-Provider) */}
-      <AIPanel
-        isOpen={isAIPanelOpen}
-        selectedText={aiSelectedText}
-        serverStatus={serverStatus}
-        activeModelName={activeModelName}
-        geminiApiKey={settings.geminiApiKey || ''}
-        settings={settings}
-        onClose={() => setIsAIPanelOpen(false)}
-        onReplaceText={handleReplaceText}
-        onInsertAfter={handleInsertAfter}
-        onOpenSettings={() => {
-          setIsAIPanelOpen(false);
-          setIsSettingsOpen(true);
-        }}
       />
 
       {/* Modal Bibbia del Romanzo (Personaggi & Luoghi per Progetto) */}

@@ -7,20 +7,33 @@ export interface AICompletionOptions {
   maxTokens?: number;
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
 /**
- * Esegue una chiamata unificata verso il Cloud Provider attivo (Gemini, OpenAI, Anthropic, OpenRouter, Groq o Custom)
+ * Esegue una conversazione multi-turn con il Cloud Provider attivo (Gemini, OpenAI, Anthropic, OpenRouter, Groq o Custom)
  */
-export async function generateWithCloudProvider(
+export async function chatWithCloudProvider(
   cloudSettings: CloudSettings,
-  prompt: string,
+  messages: ChatMessage[],
+  systemInstruction?: string,
   options: AICompletionOptions = {}
 ): Promise<string> {
   const providerType = cloudSettings.activeProvider;
   const config = cloudSettings.providers[providerType];
 
-  const systemInstruction =
-    options.systemInstruction ||
-    "Sei un assistente editoriale e creativo per scrittori di narrativa. Aiuta l'autore a sviluppare la storia rispettando fedelmente il genere, il tono, il punto di vista e le regole del mondo fornite.";
+  const systemMessagesFromChat = messages
+    .filter((m) => m.role === "system" && m.content && m.content.trim())
+    .map((m) => m.content.trim());
+
+  const effectiveSystemInstruction = [
+    systemInstruction || options.systemInstruction || "Sei un assistente editoriale e creativo per scrittori di narrativa. Aiuta l'autore a sviluppare la storia rispettando fedelmente il genere, il tono, il punto di vista e le regole del mondo fornite.",
+    ...systemMessagesFromChat,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   if (!config.apiKey && providerType !== "custom") {
     throw new Error(
@@ -30,18 +43,49 @@ export async function generateWithCloudProvider(
 
   switch (providerType) {
     case "gemini": {
-      const genAI = new GoogleGenerativeAI(config.apiKey);
-      let primaryModel = config.model || "gemini-3.8-flash";
-      if (primaryModel.includes("2.0") || primaryModel.includes("2.5") || !primaryModel.trim()) {
-        primaryModel = "gemini-3.8-flash";
+      const cleanApiKey = config.apiKey.trim();
+      const genAI = new GoogleGenerativeAI(cleanApiKey);
+      let primaryModel = config.model || "gemini-1.5-flash";
+      if (primaryModel.includes("3.8") || !primaryModel.trim()) {
+        primaryModel = "gemini-1.5-flash";
       }
 
-      // Modelli candidati in ordine di priorità: se un modello restituisce 503 (sovraccarico temporaneo di Google), effettua il fallback automatico
+      // Modelli candidati in ordine di priorità: fallback automatico
       const candidateModels = [
         primaryModel,
-        primaryModel !== "gemini-1.5-flash" ? "gemini-1.5-flash" : "gemini-3.8-flash",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash",
         "gemini-1.5-pro",
       ].filter((m, i, arr) => arr.indexOf(m) === i);
+
+      // In Gemini API i ruoli accettati nei contents sono 'user' e 'model'
+      // I messaggi devono rigorosamente alternarsi (user -> model -> user -> model)
+      const sanitizedContents: Array<{ role: "user" | "model"; parts: [{ text: string }] }> = [];
+      
+      const turnMessages = messages.filter(
+        (m) => (m.role === "user" || m.role === "assistant") && m.content && m.content.trim()
+      );
+
+      for (const m of turnMessages) {
+        const role: "user" | "model" = m.role === "assistant" ? "model" : "user";
+        if (sanitizedContents.length > 0 && sanitizedContents[sanitizedContents.length - 1].role === role) {
+          sanitizedContents[sanitizedContents.length - 1].parts[0].text += `\n\n${m.content.trim()}`;
+        } else {
+          sanitizedContents.push({
+            role,
+            parts: [{ text: m.content.trim() }],
+          });
+        }
+      }
+
+      // Rimuovi eventuali messaggi model iniziali (Gemini richiede che il primo turno sia 'user')
+      while (sanitizedContents.length > 0 && sanitizedContents[0].role !== "user") {
+        sanitizedContents.shift();
+      }
+
+      if (sanitizedContents.length === 0) {
+        throw new Error("Nessun messaggio valido fornito per l'elaborazione.");
+      }
 
       let lastError: any = null;
 
@@ -49,11 +93,11 @@ export async function generateWithCloudProvider(
         try {
           const model = genAI.getGenerativeModel({
             model: modelToTry,
-            systemInstruction,
+            systemInstruction: effectiveSystemInstruction,
           });
 
           const result = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            contents: sanitizedContents,
             generationConfig: {
               temperature: options.temperature ?? 0.7,
               maxOutputTokens: options.maxTokens ?? 8192,
@@ -66,16 +110,69 @@ export async function generateWithCloudProvider(
           lastError = err;
           const errMsg = err?.message || String(err);
 
-          // Se l'errore è un 503 (High Demand / Sovraccarico temporaneo) o 404 (modello rimosso), prova con il modello di riserva
-          if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("404")) {
+          // Se l'errore è un 503 o 404, prova con modello di riserva
+          if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("404") || errMsg.includes("not found")) {
             console.warn(`[Gemini] Modello '${modelToTry}' sovraccarico o non disponibile (${errMsg}). Tentativo con modello fallback...`);
             await new Promise((res) => setTimeout(res, 800));
             continue;
           }
 
-          // Per altri errori (chiave errata, violazione policy), lancia subito
           throw err;
         }
+      }
+
+      // Se tutti i modelli candidati hanno restituito 404, effettua una diagnostica dell'account Google AI Studio
+      if (lastError?.message?.includes("404") || lastError?.message?.includes("not found")) {
+        try {
+          const listResp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanApiKey}`
+          );
+          if (!listResp.ok) {
+            let errorDetail = "";
+            try {
+              const errData = await listResp.json();
+              errorDetail = errData.error?.message || JSON.stringify(errData);
+            } catch {}
+            throw new Error(
+              `Errore di autenticazione Google AI (${listResp.status}): ${errorDetail || "Chiave API non valida o servizio Generative Language non abilitato"}. Verifica la tua chiave su https://aistudio.google.com/app/apikey`
+            );
+          }
+          const listData = await listResp.json();
+          const validModels = (listData.models || [])
+            .filter((m: any) => m.supportedGenerationMethods?.includes("generateContent"))
+            .map((m: any) => m.name.replace(/^models\//, ""));
+
+          if (validModels.length > 0) {
+            console.warn(`[Gemini] Modelli supportati rilevati per la tua chiave:`, validModels);
+            for (const dynamicModel of validModels) {
+              try {
+                const model = genAI.getGenerativeModel({
+                  model: dynamicModel,
+                  systemInstruction: effectiveSystemInstruction,
+                });
+                const result = await model.generateContent({
+                  contents: sanitizedContents,
+                  generationConfig: {
+                    temperature: options.temperature ?? 0.7,
+                    maxOutputTokens: options.maxTokens ?? 8192,
+                  },
+                });
+                const response = await result.response;
+                return response.text();
+              } catch {
+                continue;
+              }
+            }
+          }
+        } catch (diagErr: any) {
+          if (diagErr?.message?.includes("Google AI")) {
+            throw diagErr;
+          }
+        }
+
+        throw new Error(
+          "I modelli Gemini specificati non risultano abilitati per questa chiave API Google. Verifica di avere generato la chiave gratuita su https://aistudio.google.com/app/apikey con l'API Generative Language abilitata."
+        );
       }
 
       if (lastError?.message?.includes("503") || lastError?.message?.includes("high demand")) {
@@ -99,7 +196,6 @@ export async function generateWithCloudProvider(
         else baseUrl = "http://localhost:11434/v1";
       }
 
-      // Rimuovi trailing slash
       baseUrl = baseUrl.replace(/\/+$/, "");
       const endpoint = `${baseUrl}/chat/completions`;
 
@@ -120,15 +216,22 @@ export async function generateWithCloudProvider(
       if (providerType === "openrouter") defaultModel = "deepseek/deepseek-chat";
       if (providerType === "groq") defaultModel = "llama-3.3-70b-versatile";
 
+      const apiMessages: Array<{ role: string; content: string }> = [];
+      if (effectiveSystemInstruction) {
+        apiMessages.push({ role: "system", content: effectiveSystemInstruction });
+      }
+      for (const m of messages) {
+        if (m.role === "user" || m.role === "assistant") {
+          apiMessages.push({ role: m.role, content: m.content });
+        }
+      }
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify({
           model: config.model || defaultModel,
-          messages: [
-            { role: "system", content: systemInstruction },
-            { role: "user", content: prompt },
-          ],
+          messages: apiMessages,
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 4096,
         }),
@@ -155,6 +258,28 @@ export async function generateWithCloudProvider(
       const baseUrl = config.baseUrl || "https://api.anthropic.com/v1";
       const endpoint = `${baseUrl.replace(/\/+$/, "")}/messages`;
 
+      const turnMessages = messages.filter(
+        (m) => (m.role === "user" || m.role === "assistant") && m.content && m.content.trim()
+      );
+
+      const anthropicMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
+      for (const m of turnMessages) {
+        const role = m.role as "user" | "assistant";
+        if (anthropicMessages.length > 0 && anthropicMessages[anthropicMessages.length - 1].role === role) {
+          anthropicMessages[anthropicMessages.length - 1].content += `\n\n${m.content.trim()}`;
+        } else {
+          anthropicMessages.push({ role, content: m.content.trim() });
+        }
+      }
+
+      while (anthropicMessages.length > 0 && anthropicMessages[0].role !== "user") {
+        anthropicMessages.shift();
+      }
+
+      if (anthropicMessages.length === 0) {
+        throw new Error("Nessun messaggio valido fornito per Claude.");
+      }
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -167,8 +292,8 @@ export async function generateWithCloudProvider(
           model: config.model || "claude-3-5-haiku-20241022",
           max_tokens: options.maxTokens ?? 8192,
           temperature: options.temperature ?? 0.7,
-          system: systemInstruction,
-          messages: [{ role: "user", content: prompt }],
+          system: effectiveSystemInstruction,
+          messages: anthropicMessages,
         }),
       });
 
@@ -195,7 +320,23 @@ export async function generateWithCloudProvider(
 }
 
 /**
- * Continua la narrazione basandosi sul testo scritto e sul contesto del progetto
+ * Esegue una singola chiamata con prompt verso il Cloud Provider attivo
+ */
+export async function generateWithCloudProvider(
+  cloudSettings: CloudSettings,
+  prompt: string,
+  options: AICompletionOptions = {}
+): Promise<string> {
+  return chatWithCloudProvider(
+    cloudSettings,
+    [{ role: "user", content: prompt }],
+    options.systemInstruction,
+    options
+  );
+}
+
+/**
+ * Continua la scrittura creativa partendo dal testo corrente
  */
 export async function continueWritingCreative(
   settings: EditorSettings,
@@ -204,15 +345,15 @@ export async function continueWritingCreative(
 ): Promise<string> {
   const prompt = `${
     narrativeContext && narrativeContext.trim()
-      ? `Ecco le indicazioni e il contesto del romanzo:\n${narrativeContext.trim()}\n\n`
+      ? `=== INDICAZIONI, PROFILO & BIBBIA DEL ROMANZO ===\n${narrativeContext.trim()}\n\n`
       : ""
-  }Ecco il testo scritto finora dall'autore:\n"""\n${contextText}\n"""\n\nContinua la narrazione in modo coerente e coinvolgente con 2-3 paragrafi naturali. Fornisci direttamente la continuazione:`;
+  }=== TESTO DEL MANOSCRITTO SCRITTO FINORA DALL'AUTORE ===\n"""\n${contextText}\n"""\n\nDirettiva: Continua la narrazione da dove si interrompe in modo completamente fluido e organico per 2 o 3 paragrafi naturali. Rispetta rigorosamente la voce narrante (POV), il tono e la credibilità psicologica dei personaggi. Non inserire commenti introduttivi né saluti: fornisci direttamente la prosa narrativa da inserire nell'opera:`;
 
   return generateWithCloudProvider(settings.cloud, prompt, {
     maxTokens: 4096,
     temperature: 0.7,
     systemInstruction:
-      "Sei un romanziere e ghostwriter professionista. Mantieni rigorosamente lo stile narrativo, la voce del protagonista, il registro e il genere specificati nel contesto del romanzo.",
+      "Sei un romanziere e co-autore professionista. Scrivi con precisione sensoriale, ritmo avvincente e perfetto adempimento della voce narrativa e del registro dell'opera. Non usare formule di apertura o chiusura: scrivi direttamente il testo della storia.",
   });
 }
 
@@ -226,13 +367,15 @@ export async function expandConceptCreative(
 ): Promise<string> {
   const prompt = `${
     narrativeContext && narrativeContext.trim()
-      ? `Contesto e stile del romanzo:\n${narrativeContext.trim()}\n\n`
+      ? `=== PROFILO DELL'OPERA & REGOLE DEL MONDO ===\n${narrativeContext.trim()}\n\n`
       : ""
-  }Espandi e arricchisci questo passaggio narrativo/concettuale con dettagli sensoriali, sfumature psicologiche o un'ambientazione più vivida, rispettando lo stile e le regole del mondo:\n"""\n${selectedText}\n"""`;
+  }=== PASSAGGIO DA ESPANDERE ===\n"""\n${selectedText}\n"""\n\nDirettiva: Espandi e approfondisci questo passaggio narrativo/descrittivo. Arricchiscilo con dettagli sensoriali (suoni, odori, luce), introspezione o sfumature psicologiche senza appesantire il ritmo. Applica il principio 'show, don't tell'. Fornisci direttamente il passaggio espanso pronto per l'editor:`;
 
   return generateWithCloudProvider(settings.cloud, prompt, {
     maxTokens: 4096,
     temperature: 0.7,
+    systemInstruction:
+      "Sei uno stilista della prosa e story editor. Aiuti l'autore a dare tridimensionalità, densità sensoriale e atmosfera alle scene, preservando intatto il tono dell'opera.",
   });
 }
 

@@ -208,7 +208,7 @@ async function createSchema(db: Database): Promise<void> {
     if (!docs || docs.length === 0) {
       await db.execute(
         `INSERT INTO documents (id, title, content, project_id)
-         VALUES ('capitolo-principale', 'Capitolo 1: La Chiarezza', '<h1>La Chiarezza delle Parole</h1><p>Inizia a scrivere qui. Il database SQLite locale è sempre l\\'unica fonte di verità e memorizza ogni parola istantaneamente.</p>', 'default')`
+         VALUES ('capitolo-principale', 'Capitolo 1: La Chiarezza', '<h1>La Chiarezza delle Parole</h1><p>Inizia a scrivere qui. Il database SQLite locale è sempre l''unica fonte di verità e memorizza ogni parola istantaneamente.</p>', 'default')`
       );
     }
   } catch (e) {
@@ -760,9 +760,21 @@ export async function ottieniContestoNarrativo(projectId?: string): Promise<stri
     const mappa = await ottieniMappaConcettuale(projId);
     if (mappa.nodes.length > 0) {
       const bLines: string[] = [];
-      bLines.push("=== BIBBIA DEL ROMANZO (PERSONAGGI & LUOGHI) ===");
+      bLines.push("=== BIBBIA DEL ROMANZO (PERSONAGGI, LUOGHI & LORE) ===");
+      const nodeNameMap = new Map<string, string>();
       for (const n of mappa.nodes) {
-        bLines.push(`• [${n.type.toUpperCase()}] ${n.name}: ${n.description}`);
+        nodeNameMap.set(n.id, n.name);
+        const details = n.description ? `: ${n.description}` : '';
+        bLines.push(`• [${n.type.toUpperCase()}] ${n.name}${details}`);
+      }
+
+      if (mappa.edges && mappa.edges.length > 0) {
+        bLines.push("\n--- Relazioni tra Personaggi & Dinamiche Narrative ---");
+        for (const e of mappa.edges) {
+          const srcName = nodeNameMap.get(e.source) || e.source;
+          const trgName = nodeNameMap.get(e.target) || e.target;
+          bLines.push(`• ${srcName} ──(${e.label || 'collegato a'})──> ${trgName}`);
+        }
       }
       sections.push(bLines.join("\n"));
     }
@@ -875,7 +887,7 @@ export async function esportaSnapshotProgetto(
 /**
  * Converte testo Markdown semplice in HTML compatibile con l'editor TipTap
  */
-function markdownToEditorHtml(md: string): string {
+export function markdownToEditorHtml(md: string): string {
   if (!md || md.trim() === '') return '<p></p>';
   if (/<[a-z][\s\S]*>/i.test(md)) {
     return md;

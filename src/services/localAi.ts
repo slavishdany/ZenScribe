@@ -193,3 +193,50 @@ export async function generateLocalAI(
   }
   throw new Error("Il motore AI nativo richiede l'ambiente desktop ZenScribe.");
 }
+
+/**
+ * Esegue una conversazione multi-turn con il motore AI nativo locale (Candle GGUF)
+ */
+export async function chatWithLocalAI(
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  systemPrompt?: string,
+  temperature = 0.4,
+  maxTokens = 2048
+): Promise<string> {
+  const systemMessages = messages
+    .filter((m) => m.role === 'system' && m.content && m.content.trim())
+    .map((m) => m.content.trim());
+
+  let combinedSystemPrompt = [
+    systemPrompt?.trim(),
+    ...systemMessages,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  // Protezione da superamento limite di contesto per CPU locale (max ~10.000 caratteri di contesto)
+  if (combinedSystemPrompt.length > 12000) {
+    combinedSystemPrompt = combinedSystemPrompt.slice(0, 12000) + '\n\n[...Contesto sintetizzato per limiti di memoria locale...]';
+  }
+
+  const validDialogue = messages.filter(
+    (m) => (m.role === 'user' || m.role === 'assistant') && m.content && m.content.trim()
+  );
+
+  let conversation = "";
+  if (validDialogue.length === 1 && validDialogue[0].role === 'user') {
+    // Singolo messaggio utente: invialo direttamente come prompt pulito per la massima aderenza alle istruzioni del modello
+    conversation = validDialogue[0].content.trim();
+  } else {
+    for (const msg of validDialogue) {
+      if (msg.role === 'user') {
+        conversation += `\nAutore: ${msg.content.trim()}\n`;
+      } else if (msg.role === 'assistant') {
+        conversation += `\nEditor AI: ${msg.content.trim()}\n`;
+      }
+    }
+    conversation += `\nEditor AI:`;
+  }
+
+  return await generateLocalAI(conversation.trim(), combinedSystemPrompt || undefined, temperature, maxTokens);
+}

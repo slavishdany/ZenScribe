@@ -138,3 +138,15 @@ export interface AIActionRequest {
   text: string;
   provider: 'local' | 'cloud';
 }
+
+export type ChatContextScope = 'selection' | 'chapter' | 'bible' | 'manuscript' | 'none';
+
+export interface AIChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  contextScope?: ChatContextScope;
+  contextSnippet?: string;
+  providerUsed?: string;
+}
