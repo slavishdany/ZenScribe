@@ -121,6 +121,7 @@ export const App: React.FC = () => {
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Sincronizza tema HTML (dark class)
   useEffect(() => {
@@ -454,6 +455,8 @@ export const App: React.FC = () => {
         onExportSnapshot={handleExportSnapshot}
         onExportChapter={handleExportChapter}
         onExportManuscript={handleExportManuscript}
+        isSearchOpen={isSearchOpen}
+        onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
         isAIPanelOpen={isAIPanelOpen}
         onOpenAIPanel={() => {
           if (isAIPanelOpen) {
@@ -509,6 +512,9 @@ export const App: React.FC = () => {
           lineHeight={settings.lineHeight}
           width={settings.width}
           zenMode={settings.zenMode}
+          isSearchOpen={isSearchOpen}
+          onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
+          onCloseSearch={() => setIsSearchOpen(false)}
           onUpdateCounts={(words, characters) => {
             setWordCount(words);
             setCharacterCount(characters);

@@ -1,8 +1,12 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import CharacterCount from '@tiptap/extension-character-count';
+import Underline from '@tiptap/extension-underline';
+import TextAlign from '@tiptap/extension-text-align';
+import Highlight from '@tiptap/extension-highlight';
+import { Search, Replace, ChevronUp, ChevronDown, X } from 'lucide-react';
 import { EditorFont, EditorWidth } from '../types';
 import { salvaCapitolo, caricaCapitolo } from '../services/db';
 
@@ -21,6 +25,9 @@ interface ZenEditorProps {
   onEditorReady: (editor: any) => void;
   onOpenAIWithSelection: (text: string) => void;
   onChapterSaved?: () => void;
+  isSearchOpen?: boolean;
+  onToggleSearch?: () => void;
+  onCloseSearch?: () => void;
 }
 
 const DEFAULT_DOC = `
@@ -41,6 +48,9 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
   onEditorReady,
   onOpenAIWithSelection,
   onChapterSaved,
+  isSearchOpen: externalIsSearchOpen,
+  onToggleSearch,
+  onCloseSearch,
 }) => {
   const localSaved = localStorage.getItem(`zenscribe_saved_${activeChapterId}`);
   const savedContent = localSaved || initialContent || DEFAULT_DOC;
@@ -49,12 +59,52 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
 
   currentChapterRef.current = activeChapterId;
 
+  // Stato barra fluttuante Trova e Sostituisci
+  const [internalIsSearchOpen, setInternalIsSearchOpen] = useState(false);
+  const isSearchOpen = externalIsSearchOpen !== undefined ? externalIsSearchOpen : internalIsSearchOpen;
+
+  const handleToggleSearch = () => {
+    if (onToggleSearch) {
+      onToggleSearch();
+    } else {
+      setInternalIsSearchOpen((prev) => !prev);
+    }
+  };
+
+  const handleCloseSearch = () => {
+    if (onCloseSearch) {
+      onCloseSearch();
+    } else {
+      setInternalIsSearchOpen(false);
+    }
+  };
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [replaceTerm, setReplaceTerm] = useState('');
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const [totalMatches, setTotalMatches] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (isSearchOpen) {
+      setTimeout(() => searchInputRef.current?.focus(), 80);
+    }
+  }, [isSearchOpen]);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
         heading: {
           levels: [1, 2, 3],
         },
+        horizontalRule: {},
+      }),
+      Underline,
+      Highlight.configure({
+        multicolor: false,
+      }),
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
       }),
       Placeholder.configure({
         placeholder: 'Scrivi la tua storia...',
@@ -88,6 +138,104 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
       }, DB_SAVE_DELAY_MS);
     },
   });
+
+  // Trova occorrenze della query nel documento ProseMirror
+  const getMatches = useCallback(() => {
+    if (!editor || !searchTerm.trim()) return [];
+    const query = searchTerm.toLowerCase();
+    const doc = editor.state.doc;
+    const matches: Array<{ from: number; to: number }> = [];
+
+    doc.descendants((node, pos) => {
+      if (node.isText && node.text) {
+        let idx = node.text.toLowerCase().indexOf(query);
+        while (idx !== -1) {
+          matches.push({
+            from: pos + idx,
+            to: pos + idx + query.length,
+          });
+          idx = node.text.toLowerCase().indexOf(query, idx + 1);
+        }
+      }
+    });
+
+    return matches;
+  }, [editor, searchTerm]);
+
+  // Aggiorna totale match quando cambia il testo cercato
+  useEffect(() => {
+    const matches = getMatches();
+    setTotalMatches(matches.length);
+    if (matches.length > 0) {
+      if (currentMatchIndex >= matches.length) {
+        setCurrentMatchIndex(0);
+      }
+      const m = matches[0];
+      editor?.chain().setTextSelection({ from: m.from, to: m.to }).scrollIntoView().run();
+    } else {
+      setCurrentMatchIndex(0);
+    }
+  }, [searchTerm, getMatches]);
+
+  const handleNextMatch = () => {
+    const matches = getMatches();
+    if (matches.length === 0) return;
+    const nextIdx = (currentMatchIndex + 1) % matches.length;
+    setCurrentMatchIndex(nextIdx);
+    const m = matches[nextIdx];
+    editor?.chain().focus().setTextSelection({ from: m.from, to: m.to }).scrollIntoView().run();
+  };
+
+  const handlePrevMatch = () => {
+    const matches = getMatches();
+    if (matches.length === 0) return;
+    const prevIdx = (currentMatchIndex - 1 + matches.length) % matches.length;
+    setCurrentMatchIndex(prevIdx);
+    const m = matches[prevIdx];
+    editor?.chain().focus().setTextSelection({ from: m.from, to: m.to }).scrollIntoView().run();
+  };
+
+  const handleReplaceCurrent = () => {
+    if (!editor || !searchTerm.trim()) return;
+    const matches = getMatches();
+    if (matches.length === 0) return;
+    const m = matches[currentMatchIndex] || matches[0];
+    editor
+      .chain()
+      .focus()
+      .setTextSelection({ from: m.from, to: m.to })
+      .insertContent(replaceTerm)
+      .run();
+
+    setTimeout(() => {
+      const next = getMatches();
+      setTotalMatches(next.length);
+      if (currentMatchIndex >= next.length) {
+        setCurrentMatchIndex(Math.max(0, next.length - 1));
+      }
+      if (next.length > 0) {
+        const nextMatch = next[Math.min(currentMatchIndex, next.length - 1)];
+        editor.chain().setTextSelection({ from: nextMatch.from, to: nextMatch.to }).scrollIntoView().run();
+      }
+    }, 50);
+  };
+
+  const handleReplaceAll = () => {
+    if (!editor || !searchTerm.trim()) return;
+    const matches = getMatches();
+    if (matches.length === 0) return;
+
+    const rev = [...matches].reverse();
+    editor.chain().focus().command(({ tr }) => {
+      for (const m of rev) {
+        tr.replaceWith(m.from, m.to, editor.schema.text(replaceTerm));
+      }
+      return true;
+    }).run();
+
+    setTotalMatches(0);
+    setCurrentMatchIndex(0);
+  };
 
   // Carica il contenuto quando cambia il capitolo attivo
   useEffect(() => {
@@ -123,6 +271,24 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
   // Gestione scorciatoie da tastiera globali dell'editor
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+F: Apri barra Trova e Sostituisci
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        handleToggleSearch();
+      }
+
+      // Ctrl+U: Sottolineato
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'u') {
+        e.preventDefault();
+        editor?.chain().focus().toggleUnderline().run();
+      }
+
+      // Esc: Chiudi ricerca
+      if (e.key === 'Escape' && isSearchOpen) {
+        handleCloseSearch();
+        editor?.commands.focus();
+      }
+
       // Ctrl+J / Cmd+J: Apri Assistente AI per il testo selezionato o intero paragrafo
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault();
@@ -136,7 +302,7 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [editor, onOpenAIWithSelection]);
+  }, [editor, isSearchOpen, onOpenAIWithSelection, handleToggleSearch, handleCloseSearch]);
 
   // Classi ampiezza foglio
   const getWidthClass = (w: EditorWidth) => {
@@ -160,9 +326,89 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
   };
 
   return (
-    <main className={`flex-1 overflow-y-auto px-4 sm:px-12 py-6 sm:py-16 flex justify-center transition-all duration-300 ${
+    <main className={`flex-1 overflow-y-auto px-4 sm:px-12 py-6 sm:py-16 flex justify-center transition-all duration-300 relative ${
       zenMode ? 'py-10 sm:py-24' : ''
     }`}>
+      {/* Barra Fluttuante Trova e Sostituisci */}
+      {isSearchOpen && (
+        <div className="absolute top-3 right-4 sm:right-10 z-30 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl shadow-2xl p-3 flex flex-col space-y-2 animate-fade-in w-72 sm:w-88 text-xs select-none">
+          <div className="flex items-center space-x-1.5">
+            <div className="relative flex-1">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (e.shiftKey) handlePrevMatch();
+                    else handleNextMatch();
+                  }
+                }}
+                placeholder="Trova nel capitolo..."
+                className="w-full pl-7 pr-16 py-1.5 bg-stone-100 dark:bg-stone-800 border-none rounded-xl text-xs text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-2.5" />
+              <span className="text-[10px] text-stone-400 absolute right-2.5 top-2 font-mono">
+                {totalMatches > 0 ? `${currentMatchIndex + 1}/${totalMatches}` : '0'}
+              </span>
+            </div>
+            <button
+              onClick={handlePrevMatch}
+              disabled={totalMatches === 0}
+              className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-30 text-stone-600 dark:text-stone-300 transition-colors"
+              title="Precedente (Shift+Enter)"
+            >
+              <ChevronUp className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleNextMatch}
+              disabled={totalMatches === 0}
+              className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-30 text-stone-600 dark:text-stone-300 transition-colors"
+              title="Successivo (Enter)"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleCloseSearch}
+              className="p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 transition-colors"
+              title="Chiudi (Esc)"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center space-x-1.5">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={replaceTerm}
+                onChange={(e) => setReplaceTerm(e.target.value)}
+                placeholder="Sostituisci con..."
+                className="w-full pl-7 pr-2 py-1.5 bg-stone-100 dark:bg-stone-800 border-none rounded-xl text-xs text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <Replace className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-2.5" />
+            </div>
+            <button
+              onClick={handleReplaceCurrent}
+              disabled={totalMatches === 0}
+              className="px-2.5 py-1.5 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 hover:bg-stone-50 dark:hover:bg-stone-750 text-stone-700 dark:text-stone-300 rounded-xl text-[11px] font-medium disabled:opacity-30 transition-colors shadow-2xs"
+              title="Sostituisci occorrenza attiva"
+            >
+              Sostituisci
+            </button>
+            <button
+              onClick={handleReplaceAll}
+              disabled={totalMatches === 0}
+              className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[11px] font-medium disabled:opacity-30 transition-colors shadow-2xs"
+              title="Sostituisci tutte le occorrenze"
+            >
+              Tutti
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         className={`w-full ${getWidthClass(width)} ${getFontFamily(font)} transition-all duration-200`}
         style={{
