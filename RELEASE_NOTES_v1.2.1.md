@@ -1,8 +1,8 @@
-# ZenScribe v1.3.0 - Release Notes
+# ZenScribe v1.2.1 - Release Notes
 
-## 🚀 Novità Principali della Versione 1.3.0
+## 🚀 Novità Principali della Versione 1.2.1
 
-Siamo passati alla versione **v1.3.0**! Questo aggiornamento introduce importanti migliorie all'editor di testo, al sistema di Worldbuilding e Concept Map, alla velocità dell'assistente AI e alla sincronizzazione dei profili di progetto.
+Siamo passati alla versione **v1.2.1**! Questo aggiornamento introduce importanti migliorie all'editor di testo, al sistema di Worldbuilding e Concept Map, alla velocità dell'assistente AI e alla sincronizzazione dei profili di progetto.
 
 ---
 
@@ -33,5 +33,5 @@ Siamo passati alla versione **v1.3.0**! Questo aggiornamento introduce important
 ---
 
 ## 📦 File di Installazione Generati
-- Installer NSIS: `ZenScribe_1.3.0_x64-setup.exe`
-- Pacchetto MSI: `ZenScribe_1.3.0_x64_it-IT.msi`
+- Installer NSIS: `ZenScribe_1.2.1_x64-setup.exe`
+- Pacchetto MSI: `ZenScribe_1.2.1_x64_it-IT.msi`
