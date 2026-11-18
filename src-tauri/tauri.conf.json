@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ZenScribe",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "identifier": "com.zenscribe.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",

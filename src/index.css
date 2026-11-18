@@ -86,8 +86,59 @@
 
 .tiptap hr {
   border: none;
-  border-top: 1px solid #e5e7eb;
-  margin: 2rem 0;
+  border-top: 1px solid #d6d3d1;
+  margin: 2.75rem auto;
+  position: relative;
+  text-align: center;
+  max-width: 65%;
+}
+
+.tiptap hr::after {
+  content: "♦   ♦   ♦";
+  display: inline-block;
+  position: relative;
+  top: -0.75rem;
+  padding: 0 0.85rem;
+  background-color: #fafaf9;
+  color: #a8a29e;
+  font-size: 0.75rem;
+  letter-spacing: 0.25em;
+}
+
+.dark .tiptap hr {
+  border-top-color: #44403c;
+}
+
+.dark .tiptap hr::after {
+  background-color: #1c1917;
+  color: #78716c;
+}
+
+/* Evidenziatore editoriale */
+.tiptap mark {
+  background-color: #fef08a;
+  color: #713f12;
+  padding: 0.15rem 0.3rem;
+  border-radius: 0.25rem;
+}
+
+.dark .tiptap mark {
+  background-color: rgba(234, 179, 8, 0.28);
+  color: #fef9c3;
+}
+
+/* Allineamento del testo */
+.tiptap [style*="text-align: left"] {
+  text-align: left;
+}
+.tiptap [style*="text-align: center"] {
+  text-align: center;
+}
+.tiptap [style*="text-align: right"] {
+  text-align: right;
+}
+.tiptap [style*="text-align: justify"] {
+  text-align: justify;
 }
 
 /* Custom Scrollbar */

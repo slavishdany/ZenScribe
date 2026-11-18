@@ -42,6 +42,7 @@ interface AIPanelProps {
   currentChapterTitle?: string;
   currentChapterContent?: string;
   chapters?: ChapterItem[];
+  activeProjectId?: string;
   projectTitle?: string;
   projectProfile?: ProjectProfile;
   onClose: () => void;
@@ -95,6 +96,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   currentChapterTitle,
   currentChapterContent,
   chapters = [],
+  activeProjectId,
   projectTitle,
   projectProfile,
   onClose,
@@ -165,7 +167,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     cloud: {
       activeProvider: 'gemini',
       providers: {
-        gemini: { apiKey: geminiApiKey, model: 'gemini-1.5-flash' },
+        gemini: { apiKey: geminiApiKey, model: 'gemini-2.5-flash' },
         openai: { apiKey: '', model: 'gpt-4o-mini' },
         anthropic: { apiKey: '', model: 'claude-3-5-haiku-20241022' },
         openrouter: { apiKey: '', model: 'deepseek/deepseek-chat' },
@@ -196,7 +198,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     : 'Offline';
 
   const cloudNameMap: Record<string, string> = {
-    gemini: 'Gemini Flash',
+    gemini: 'Gemini 2.5 Flash',
     openai: 'GPT-4o-mini',
     anthropic: 'Claude 3.5',
     openrouter: 'OpenRouter',
@@ -218,7 +220,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   // ============================================================================
   const resolveContextPayload = async (scope: ChatContextScope): Promise<string> => {
     let contextStr = '';
-    const narrativeBible = await ottieniContestoNarrativo();
+    const narrativeBible = await ottieniContestoNarrativo(activeProjectId);
 
     // Dati di profilazione narrativa (Stile, Genere, POV, Regole)
     const p = projectProfile || (projectTitle ? { title: projectTitle } : null) as any;
@@ -472,7 +474,7 @@ Trattale come il tuo tavolo di lavoro comune con l'autore. Non dire MAI "non pos
 
     try {
       let output = '';
-      const context = await ottieniContestoNarrativo();
+      const context = await ottieniContestoNarrativo(activeProjectId);
 
       if (actionType === 'spellcheck') {
         if (!serverStatus.isReady) {

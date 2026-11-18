@@ -687,11 +687,20 @@ export async function creaCollegamento(
 }
 
 /**
- * Elimina un nodo dalla mappa concettuale
+ * Elimina un nodo dalla mappa concettuale (e i relativi collegamenti a cascata)
  */
 export async function eliminaNodo(id: string): Promise<void> {
   const db = await inizializzaDatabase();
+  await db.execute(`DELETE FROM edges WHERE source_id = $1 OR target_id = $1`, [id]);
   await db.execute(`DELETE FROM nodes WHERE id = $1`, [id]);
+}
+
+/**
+ * Elimina un collegamento tra due entità della mappa concettuale
+ */
+export async function eliminaCollegamento(id: string): Promise<void> {
+  const db = await inizializzaDatabase();
+  await db.execute(`DELETE FROM edges WHERE id = $1`, [id]);
 }
 
 /**
