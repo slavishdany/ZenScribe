@@ -234,6 +234,8 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
     setIsProcessing(true);
     try {
       await salvaProgetto(profileForm);
+      setActiveProjectId(profileForm.id);
+      setActiveId(profileForm.id);
       await refreshProjectsList();
       if (onProjectUpdated) {
         onProjectUpdated({
@@ -246,7 +248,8 @@ export const ProjectsManagerModal: React.FC<ProjectsManagerModalProps> = ({
           narrativeNotes: profileForm.narrativeNotes,
         });
       }
-      showToast('Profilo del progetto aggiornato nel database SQLite!');
+      onProjectChanged(profileForm.id);
+      showToast('Profilo del progetto salvato e sincronizzato nel database!');
     } catch (err: any) {
       showToast(`Errore salvataggio: ${err.message || err}`, 'error');
     } finally {

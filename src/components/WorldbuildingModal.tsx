@@ -37,6 +37,7 @@ interface WorldbuildingModalProps {
   isOpen: boolean;
   geminiApiKey?: string;
   settings?: EditorSettings;
+  activeProjectId?: string;
   onClose: () => void;
   onCreateChapterFromPlot?: (title: string, content: string) => Promise<void>;
   onOpenSettings?: () => void;
@@ -60,6 +61,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
   isOpen,
   geminiApiKey,
   settings,
+  activeProjectId,
   onClose,
   onCreateChapterFromPlot,
   onOpenSettings,
@@ -101,7 +103,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
   // Caricamento completo da SQLite
   const loadMap = async () => {
     try {
-      const map = await ottieniMappaConcettuale();
+      const map = await ottieniMappaConcettuale(activeProjectId);
       setNodes(map.nodes || []);
       setEdges(map.edges || []);
     } catch (e) {
@@ -118,7 +120,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
       setPlotSavedFeedback(null);
       setPlotError(null);
     }
-  }, [isOpen]);
+  }, [isOpen, activeProjectId]);
 
   // Lookup rapido per trovare un nodo dato il suo ID
   const nodeMap = useMemo(() => {
@@ -154,7 +156,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
     setIsSubmitting(true);
     try {
       const id = editingNodeId || `node-${Date.now()}`;
-      await creaNodo(id, newType, newName.trim(), newDesc.trim());
+      await creaNodo(id, newType, newName.trim(), newDesc.trim(), {}, activeProjectId);
       setNewName('');
       setNewDesc('');
       setEditingNodeId(null);
@@ -213,7 +215,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
     setIsSubmittingRelation(true);
     try {
       const id = `edge-${Date.now()}`;
-      await creaCollegamento(id, selectedSourceId, selectedTargetId, label);
+      await creaCollegamento(id, selectedSourceId, selectedTargetId, label, activeProjectId);
       setRelationshipLabel('');
       await loadMap();
     } catch (err) {
@@ -255,7 +257,7 @@ export const WorldbuildingModal: React.FC<WorldbuildingModalProps> = ({
       return;
     }
 
-    const bibleContent = await ottieniContestoNarrativo();
+    const bibleContent = await ottieniContestoNarrativo(activeProjectId);
     if (!bibleContent.trim()) {
       setPlotError(
         'Aggiungi prima almeno un personaggio, fazione o luogo nella Bibbia (o compila il profilo del romanzo)!'

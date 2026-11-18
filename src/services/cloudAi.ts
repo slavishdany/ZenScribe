@@ -45,17 +45,24 @@ export async function chatWithCloudProvider(
     case "gemini": {
       const cleanApiKey = config.apiKey.trim();
       const genAI = new GoogleGenerativeAI(cleanApiKey);
-      let primaryModel = config.model || "gemini-1.5-flash";
-      if (primaryModel.includes("3.8") || !primaryModel.trim()) {
-        primaryModel = "gemini-1.5-flash";
+      let primaryModel = config.model || "gemini-2.5-flash";
+      if (
+        primaryModel === "gemini-1.5-flash" ||
+        primaryModel === "gemini-2.0-flash" ||
+        primaryModel === "gemini-1.5-pro" ||
+        primaryModel.includes("3.8") ||
+        !primaryModel.trim()
+      ) {
+        primaryModel = "gemini-2.5-flash";
       }
 
-      // Modelli candidati in ordine di priorità: fallback automatico
+      // Modelli candidati moderni supportati (in ordine di priorità)
       const candidateModels = [
         primaryModel,
-        "gemini-1.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-latest",
       ].filter((m, i, arr) => arr.indexOf(m) === i);
 
       // In Gemini API i ruoli accettati nei contents sono 'user' e 'model'
@@ -91,10 +98,13 @@ export async function chatWithCloudProvider(
 
       for (const modelToTry of candidateModels) {
         try {
-          const model = genAI.getGenerativeModel({
-            model: modelToTry,
-            systemInstruction: effectiveSystemInstruction,
-          });
+          const model = genAI.getGenerativeModel(
+            {
+              model: modelToTry,
+              systemInstruction: effectiveSystemInstruction,
+            },
+            { timeout: 35000 }
+          );
 
           const result = await model.generateContent({
             contents: sanitizedContents,
@@ -105,74 +115,34 @@ export async function chatWithCloudProvider(
           });
 
           const response = await result.response;
-          return response.text();
+          const text = response.text();
+          if (text && text.trim()) {
+            return text.trim();
+          }
         } catch (err: any) {
           lastError = err;
           const errMsg = err?.message || String(err);
 
-          // Se l'errore è un 503 o 404, prova con modello di riserva
-          if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("404") || errMsg.includes("not found")) {
-            console.warn(`[Gemini] Modello '${modelToTry}' sovraccarico o non disponibile (${errMsg}). Tentativo con modello fallback...`);
-            await new Promise((res) => setTimeout(res, 800));
+          // Se l'errore è un 503 (sovraccarico temporaneo) o 404 (modello non supportato), prova il successivo
+          if (
+            errMsg.includes("503") ||
+            errMsg.includes("high demand") ||
+            errMsg.includes("404") ||
+            errMsg.includes("not found")
+          ) {
+            console.warn(`[Gemini] Modello '${modelToTry}' sovraccarico o non disponibile (${errMsg}). Tentativo con fallback...`);
+            await new Promise((res) => setTimeout(res, 500));
             continue;
+          }
+
+          if (errMsg.includes("API key not valid") || errMsg.includes("API_KEY_INVALID")) {
+            throw new Error(
+              "Chiave API Google AI non valida. Verifica la tua chiave su https://aistudio.google.com/app/apikey"
+            );
           }
 
           throw err;
         }
-      }
-
-      // Se tutti i modelli candidati hanno restituito 404, effettua una diagnostica dell'account Google AI Studio
-      if (lastError?.message?.includes("404") || lastError?.message?.includes("not found")) {
-        try {
-          const listResp = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanApiKey}`
-          );
-          if (!listResp.ok) {
-            let errorDetail = "";
-            try {
-              const errData = await listResp.json();
-              errorDetail = errData.error?.message || JSON.stringify(errData);
-            } catch {}
-            throw new Error(
-              `Errore di autenticazione Google AI (${listResp.status}): ${errorDetail || "Chiave API non valida o servizio Generative Language non abilitato"}. Verifica la tua chiave su https://aistudio.google.com/app/apikey`
-            );
-          }
-          const listData = await listResp.json();
-          const validModels = (listData.models || [])
-            .filter((m: any) => m.supportedGenerationMethods?.includes("generateContent"))
-            .map((m: any) => m.name.replace(/^models\//, ""));
-
-          if (validModels.length > 0) {
-            console.warn(`[Gemini] Modelli supportati rilevati per la tua chiave:`, validModels);
-            for (const dynamicModel of validModels) {
-              try {
-                const model = genAI.getGenerativeModel({
-                  model: dynamicModel,
-                  systemInstruction: effectiveSystemInstruction,
-                });
-                const result = await model.generateContent({
-                  contents: sanitizedContents,
-                  generationConfig: {
-                    temperature: options.temperature ?? 0.7,
-                    maxOutputTokens: options.maxTokens ?? 8192,
-                  },
-                });
-                const response = await result.response;
-                return response.text();
-              } catch {
-                continue;
-              }
-            }
-          }
-        } catch (diagErr: any) {
-          if (diagErr?.message?.includes("Google AI")) {
-            throw diagErr;
-          }
-        }
-
-        throw new Error(
-          "I modelli Gemini specificati non risultano abilitati per questa chiave API Google. Verifica di avere generato la chiave gratuita su https://aistudio.google.com/app/apikey con l'API Generative Language abilitata."
-        );
       }
 
       if (lastError?.message?.includes("503") || lastError?.message?.includes("high demand")) {
@@ -181,7 +151,13 @@ export async function chatWithCloudProvider(
         );
       }
 
-      throw lastError;
+      if (lastError?.message?.includes("404") || lastError?.message?.includes("not found")) {
+        throw new Error(
+          "I modelli Gemini richiesti non sono disponibili per la tua chiave. Verifica di avere configurato 'gemini-2.5-flash' o 'gemini-2.5-flash-lite' nelle Impostazioni."
+        );
+      }
+
+      throw lastError || new Error("Nessuna risposta ricevuta da Gemini. Riprova.");
     }
 
     case "openai":
@@ -226,16 +202,28 @@ export async function chatWithCloudProvider(
         }
       }
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: config.model || defaultModel,
-          messages: apiMessages,
-          temperature: options.temperature ?? 0.7,
-          max_tokens: options.maxTokens ?? 4096,
-        }),
-      });
+      let response: Response;
+      try {
+        response = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          signal: AbortSignal.timeout(35000),
+          body: JSON.stringify({
+            model: config.model || defaultModel,
+            messages: apiMessages,
+            temperature: options.temperature ?? 0.7,
+            max_tokens: options.maxTokens ?? 4096,
+          }),
+        });
+      } catch (err: any) {
+        if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+          throw new Error(`Tempo di attesa scaduto (35s) per ${providerType.toUpperCase()}. Il server non ha risposto in tempo: riprova.`);
+        }
+        if (err?.message?.includes("Failed to fetch") || err?.name === "TypeError") {
+          throw new Error(`Impossibile contattare ${providerType.toUpperCase()} (${endpoint}): verifica la connessione a Internet e le restrizioni CORS del provider.`);
+        }
+        throw err;
+      }
 
       if (!response.ok) {
         let errorDetail = response.statusText;
@@ -280,22 +268,34 @@ export async function chatWithCloudProvider(
         throw new Error("Nessun messaggio valido fornito per Claude.");
       }
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": config.apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: config.model || "claude-3-5-haiku-20241022",
-          max_tokens: options.maxTokens ?? 8192,
-          temperature: options.temperature ?? 0.7,
-          system: effectiveSystemInstruction,
-          messages: anthropicMessages,
-        }),
-      });
+      let response: Response;
+      try {
+        response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": config.apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true",
+          },
+          signal: AbortSignal.timeout(35000),
+          body: JSON.stringify({
+            model: config.model || "claude-3-5-haiku-20241022",
+            max_tokens: options.maxTokens ?? 8192,
+            temperature: options.temperature ?? 0.7,
+            system: effectiveSystemInstruction,
+            messages: anthropicMessages,
+          }),
+        });
+      } catch (err: any) {
+        if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+          throw new Error("Tempo di attesa scaduto (35s) per Anthropic Claude. Riprova.");
+        }
+        if (err?.message?.includes("Failed to fetch") || err?.name === "TypeError") {
+          throw new Error("Impossibile contattare l'API di Anthropic Claude. Verifica la connessione a Internet.");
+        }
+        throw err;
+      }
 
       if (!response.ok) {
         let errorDetail = response.statusText;
