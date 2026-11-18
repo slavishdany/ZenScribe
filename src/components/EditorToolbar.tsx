@@ -27,6 +27,7 @@ import {
   Compass,
   BookMarked,
   Download,
+  Layers,
 } from 'lucide-react';
 import { EditorFont, EditorWidth } from '../types';
 
@@ -45,6 +46,10 @@ interface EditorToolbarProps {
   onToggleSearch?: () => void;
   isSearchOpen?: boolean;
   onToggleChapters?: () => void;
+  onToggleTabBar?: () => void;
+  isTabBarVisible?: boolean;
+  onToggleGlossary?: () => void;
+  isGlossaryOpen?: boolean;
   onOpenWorldbuilding?: () => void;
   onOpenProjectProfile?: () => void;
   onOpenProjectsManager?: (tab?: 'library' | 'create' | 'profile' | 'import') => void;
@@ -68,6 +73,10 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   onToggleSearch,
   isSearchOpen = false,
   onToggleChapters,
+  onToggleTabBar,
+  isTabBarVisible = true,
+  onToggleGlossary,
+  isGlossaryOpen = false,
   onOpenWorldbuilding,
   onOpenProjectProfile,
   onOpenProjectsManager,
@@ -106,6 +115,21 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           >
             <Compass className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             <span className="hidden md:inline">Worldbuilding</span>
+          </button>
+        )}
+
+        {onToggleGlossary && (
+          <button
+            onClick={onToggleGlossary}
+            className={`p-1.5 rounded-lg text-xs font-medium flex items-center space-x-1 transition-colors ${
+              isGlossaryOpen
+                ? 'bg-indigo-600 text-white shadow-2xs'
+                : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-700 dark:text-stone-300'
+            }`}
+            title="Glossario Schede, Trama & Indice del Romanzo (Ctrl+G)"
+          >
+            <Layers className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+            <span className="hidden md:inline">Glossario</span>
           </button>
         )}
 

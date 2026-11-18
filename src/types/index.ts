@@ -1,6 +1,15 @@
 export type EditorFont = 'serif' | 'sans' | 'mono';
 export type EditorWidth = 'narrow' | 'medium' | 'wide' | 'full';
 
+export type TabType = 'chapter' | 'plot' | 'world';
+
+export interface TabItem {
+  id: string;
+  title: string;
+  type: TabType;
+  entityId?: string;
+}
+
 export interface PresetModel {
   id: string;
   name: string;

@@ -189,6 +189,13 @@ fn restart_llama_server<R: Runtime>(
     }
 }
 
+/// Comando per interrompere immediatamente l'inferenza AI locale in corso
+#[tauri::command]
+fn abort_local_ai(state: State<'_, AppAiState>) -> Result<(), String> {
+    state.engine.abort();
+    Ok(())
+}
+
 /// Comando nativo di inferenza AI locale
 #[tauri::command]
 async fn generate_local_ai(
@@ -200,7 +207,7 @@ async fn generate_local_ai(
 ) -> Result<String, String> {
     let engine = state.engine.clone();
     let temp = temperature.unwrap_or(0.3);
-    let max_tok = max_tokens.unwrap_or(1024);
+    let max_tok = max_tokens.unwrap_or(384).clamp(16, 512);
 
     tokio::task::spawn_blocking(move || {
         engine.generate(&prompt, system_prompt.as_deref(), max_tok, temp)
@@ -214,22 +221,17 @@ async fn generate_local_ai(
 async fn correct_spelling_local(
     state: State<'_, AppAiState>,
     text: String,
-    context: Option<String>,
+    _context: Option<String>,
 ) -> Result<String, String> {
-    let system_prompt = match context {
-        Some(ref ctx) => format!(
-            "Sei un correttore bozze esperto per uno scrittore. Ecco il contesto del racconto (personaggi e luoghi):\n{}\n\nCorreggi esclusivamente refusi, ortografia e grammatica mantenendo inalterata la voce dell'autore. Rispondi SOLO con il testo corretto.",
-            ctx
-        ),
-        None => "Sei un editor e correttore di bozze letterario preciso ed essenziale. Rispondi SOLO con il testo corretto, senza commenti.".to_string(),
-    };
+    let system_prompt = "Sei un correttore di bozze ed editor letterario. Rispondi ESCLUSIVAMENTE con il testo corretto, senza commenti né premesse.".to_string();
 
     let prompt = format!(
-        "Correggi esclusivamente errori grammaticali, ortografici e refusi nel seguente testo in italiano, mantenendo intatto lo stile, la punteggiatura narrativa e la voce dell'autore. Rispondi SOLO con il testo corretto, senza spiegazioni o premesse.\n\nTesto:\n\"\"\"\n{}\n\"\"\"",
-        text
+        "Correggi esclusivamente errori grammaticali, ortografici e refusi nel seguente testo in italiano. Rispondi solo con il testo corretto:\n\n\"\"\"\n{}\n\"\"\"",
+        text.trim()
     );
 
-    generate_local_ai(state, prompt, Some(system_prompt), Some(0.2), Some(2048)).await
+    let estimated_tokens = (text.split_whitespace().count() * 2 + 64).clamp(64, 384);
+    generate_local_ai(state, prompt, Some(system_prompt), Some(0.1), Some(estimated_tokens)).await
 }
 
 /// Comando rapido per la riformulazione e miglioramento stilistico
@@ -237,22 +239,17 @@ async fn correct_spelling_local(
 async fn rephrase_text_local(
     state: State<'_, AppAiState>,
     text: String,
-    context: Option<String>,
+    _context: Option<String>,
 ) -> Result<String, String> {
-    let system_prompt = match context {
-        Some(ref ctx) => format!(
-            "Sei un assistente di scrittura letteraria. Ecco il contesto del racconto (personaggi e luoghi):\n{}\n\nRiscrivi migliorando fluidità e ritmo preservando i personaggi e il significato.",
-            ctx
-        ),
-        None => "Sei un assistente di scrittura che perfeziona lo stile senza alterare la voce originale.".to_string(),
-    };
+    let system_prompt = "Sei un assistente di scrittura letteraria. Migliora la fluidità sintattica e il ritmo espressivo preservando la voce dell'autore. Rispondi ESCLUSIVAMENTE con la nuova versione.".to_string();
 
     let prompt = format!(
-        "Riscrivi il seguente testo migliorandone la fluidità sintattica e il ritmo espressivo, preservando il significato originale. Rispondi ESCLUSIVAMENTE con la nuova versione.\n\nTesto:\n\"\"\"\n{}\n\"\"\"",
-        text
+        "Riscrivi il seguente testo migliorandone la fluidità e il ritmo. Rispondi solo con il testo riscritto:\n\n\"\"\"\n{}\n\"\"\"",
+        text.trim()
     );
 
-    generate_local_ai(state, prompt, Some(system_prompt), Some(0.4), Some(2048)).await
+    let estimated_tokens = (text.split_whitespace().count() * 2 + 96).clamp(96, 384);
+    generate_local_ai(state, prompt, Some(system_prompt), Some(0.3), Some(estimated_tokens)).await
 }
 
 // ============================================================================
@@ -401,6 +398,7 @@ pub fn run() {
             switch_local_model,
             check_server_ready,
             is_server_ready,
+            abort_local_ai,
             restart_llama_server,
             generate_local_ai,
             correct_spelling_local,

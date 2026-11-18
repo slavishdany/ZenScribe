@@ -8,6 +8,8 @@ import { SettingsModal, DEFAULT_CLOUD_SETTINGS } from './components/SettingsModa
 import { ChapterSidebar, ChapterItem } from './components/ChapterSidebar';
 import { WorldbuildingModal } from './components/WorldbuildingModal';
 import { ProjectsManagerModal } from './components/ProjectsManagerModal';
+import { TabBar } from './components/TabBar';
+import { GlossaryDrawer } from './components/GlossaryDrawer';
 import {
   EditorSettings,
   ServerStatusInfo,
@@ -16,6 +18,7 @@ import {
   LocalModelInfo,
   ProjectProfile,
   ProjectItem,
+  TabItem,
 } from './types';
 import {
   checkLocalServerStatus,
@@ -36,6 +39,8 @@ import {
   setActiveProjectId,
   esportaSnapshotProgetto,
   markdownToEditorHtml,
+  ottieniTramaProgetto,
+  salvaTramaProgetto,
 } from './services/db';
 import {
   selectProjectFolder,
@@ -108,6 +113,16 @@ export const App: React.FC = () => {
   const [isChaptersOpen, setIsChaptersOpen] = useState(false);
   const [isWorldbuildingOpen, setIsWorldbuildingOpen] = useState(false);
 
+  // Gestione Schede di Lavoro Multi-Documento & Glossario
+  const [tabs, setTabs] = useState<TabItem[]>([
+    { id: 'capitolo-principale', title: 'Capitolo 1', type: 'chapter' },
+  ]);
+  const [isTabBarVisible, setIsTabBarVisible] = useState<boolean>(() => {
+    const saved = localStorage.getItem('zenscribe_tabbar_visible');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
+
   // Modale Gestione Multi-Progetto
   const [isProjectsManagerOpen, setIsProjectsManagerOpen] = useState(false);
   const [projectsManagerTab, setProjectsManagerTab] = useState<'library' | 'create' | 'profile' | 'import'>('library');
@@ -177,10 +192,27 @@ export const App: React.FC = () => {
         const chList = await elencaCapitoli(proj.id);
         if (chList && chList.length > 0) {
           setChapters(chList);
+          const firstChap = chList[0];
           if (targetId) {
-            setActiveChapterId(chList[0].id);
+            setActiveChapterId(firstChap.id);
+            setTabs([{ id: firstChap.id, title: firstChap.title, type: 'chapter' }]);
           } else {
-            setActiveChapterId((prev) => (chList.some((c) => c.id === prev) ? prev : chList[0].id));
+            setActiveChapterId((prev) => (chList.some((c) => c.id === prev) ? prev : firstChap.id));
+            setTabs((prevTabs) => {
+              const valid = prevTabs.filter(
+                (t) => t.type === 'plot' || chList.some((c) => c.id === t.id)
+              );
+              if (valid.length > 0) {
+                return valid.map((t) => {
+                  if (t.type === 'chapter') {
+                    const m = chList.find((c) => c.id === t.id);
+                    return m ? { ...t, title: m.title } : t;
+                  }
+                  return t;
+                });
+              }
+              return [{ id: firstChap.id, title: firstChap.title, type: 'chapter' }];
+            });
           }
         } else {
           const initialChapters = [
@@ -192,6 +224,7 @@ export const App: React.FC = () => {
           ];
           setChapters(initialChapters);
           setActiveChapterId(initialChapters[0].id);
+          setTabs([{ id: initialChapters[0].id, title: initialChapters[0].title, type: 'chapter' }]);
         }
       }
     } catch (e) {
@@ -273,8 +306,10 @@ export const App: React.FC = () => {
   // Creazione capitolo
   const handleCreateChapter = async () => {
     try {
-      const newId = await creaNuovoCapitolo(`Capitolo ${chapters.length + 1}`, activeProjectId);
+      const chapterTitle = `Capitolo ${chapters.length + 1}`;
+      const newId = await creaNuovoCapitolo(chapterTitle, activeProjectId);
       await refreshProjectData(activeProjectId);
+      setTabs((prev) => [...prev, { id: newId, title: chapterTitle, type: 'chapter' }]);
       setActiveChapterId(newId);
     } catch (e) {
       console.error('[DB] Errore creazione capitolo:', e);
@@ -286,6 +321,7 @@ export const App: React.FC = () => {
     try {
       await eliminaCapitolo(id);
       await refreshProjectData(activeProjectId);
+      handleCloseTab(id);
     } catch (e) {
       console.error('[DB] Errore eliminazione capitolo:', e);
     }
@@ -296,10 +332,91 @@ export const App: React.FC = () => {
     try {
       await rinominaCapitolo(id, newTitle);
       await refreshProjectData(activeProjectId);
+      setTabs((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, title: newTitle } : t))
+      );
     } catch (e) {
       console.error('[DB] Errore rinomina capitolo:', e);
     }
   };
+
+  // Gestione Schede di Scrittura (Tabs)
+  const handleToggleTabBar = () => {
+    setIsTabBarVisible((prev) => {
+      const next = !prev;
+      localStorage.setItem('zenscribe_tabbar_visible', String(next));
+      return next;
+    });
+  };
+
+  const handleSelectTab = (tabId: string) => {
+    setActiveChapterId(tabId);
+  };
+
+  const handleCloseTab = (tabId: string) => {
+    const index = tabs.findIndex((t) => t.id === tabId);
+    const newTabs = tabs.filter((t) => t.id !== tabId);
+    setTabs(newTabs);
+
+    if (activeChapterId === tabId) {
+      if (newTabs.length > 0) {
+        const newActiveIndex = Math.max(0, index - 1);
+        const nextTab = newTabs[newActiveIndex] || newTabs[0];
+        setActiveChapterId(nextTab.id);
+      } else {
+        setActiveChapterId('');
+      }
+    }
+  };
+
+  const handleCloseOtherTabs = (keepTabId: string) => {
+    const kept = tabs.filter((t) => t.id === keepTabId);
+    setTabs(kept);
+    setActiveChapterId(keepTabId);
+  };
+
+  const handleOpenPlotTab = async () => {
+    try {
+      const plotDoc = await ottieniTramaProgetto(activeProjectId);
+      const plotId = plotDoc.id;
+      if (!tabs.some((t) => t.id === plotId)) {
+        setTabs((prev) => [...prev, { id: plotId, title: 'Trama & Struttura', type: 'plot' }]);
+      }
+      setActiveChapterId(plotId);
+    } catch (err) {
+      console.warn('[App] Errore apertura scheda trama:', err);
+    }
+  };
+
+  const handleOpenChapterInTab = (chapterId: string) => {
+    const chap = chapters.find((c) => c.id === chapterId);
+    const title = chap?.title || 'Capitolo';
+    if (!tabs.some((t) => t.id === chapterId)) {
+      setTabs((prev) => [...prev, { id: chapterId, title, type: 'chapter' }]);
+    }
+    setActiveChapterId(chapterId);
+  };
+
+  const handleInsertTextIntoEditor = (text: string) => {
+    if (!editorInstance) return;
+    editorInstance.chain().focus().insertContent(text).run();
+  };
+
+  // Scorciatoie tastiera globali per Schede (Ctrl+Alt+T) e Glossario (Ctrl+G)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault();
+        handleToggleTabBar();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')) {
+        e.preventDefault();
+        setIsGlossaryOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Creazione capitolo dalla trama AI
   const handleCreateChapterFromPlot = async (title: string, content: string) => {
@@ -329,22 +446,41 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const isVerifyingRef = useRef(false);
+
   // Health check del motore AI locale nativo
   const verifyServer = useCallback(async () => {
-    setServerStatus((prev) => ({ ...prev, isChecking: true }));
-    const ready = await checkLocalServerStatus();
-    setServerStatus({
-      isReady: ready,
-      isChecking: false,
-      lastChecked: Date.now(),
-      activeModelName,
-    });
+    if (isVerifyingRef.current) return;
+    isVerifyingRef.current = true;
+    try {
+      const ready = await checkLocalServerStatus();
+      setServerStatus((prev) => {
+        if (prev.isReady === ready && prev.activeModelName === activeModelName && !prev.isChecking) {
+          return prev;
+        }
+        return {
+          isReady: ready,
+          isChecking: false,
+          lastChecked: Date.now(),
+          activeModelName,
+        };
+      });
+    } catch (err) {
+      setServerStatus((prev) => ({
+        ...prev,
+        isReady: false,
+        isChecking: false,
+        lastChecked: Date.now(),
+      }));
+    } finally {
+      isVerifyingRef.current = false;
+    }
   }, [activeModelName]);
 
   useEffect(() => {
     verifyServer();
     refreshModelsList();
-    const interval = setInterval(verifyServer, 4000);
+    const interval = setInterval(verifyServer, 10000);
     return () => clearInterval(interval);
   }, [verifyServer, refreshModelsList]);
 
@@ -463,6 +599,10 @@ export const App: React.FC = () => {
         onExportManuscript={handleExportManuscript}
         isSearchOpen={isSearchOpen}
         onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
+        isTabBarVisible={isTabBarVisible}
+        onToggleTabBar={handleToggleTabBar}
+        isGlossaryOpen={isGlossaryOpen}
+        onToggleGlossary={() => setIsGlossaryOpen((prev) => !prev)}
         isAIPanelOpen={isAIPanelOpen}
         onOpenAIPanel={() => {
           if (isAIPanelOpen) {
@@ -477,6 +617,50 @@ export const App: React.FC = () => {
           }
         }}
       />
+
+      {/* Barra delle Schede di Scrittura (Trama, Capitoli, Note) - A Scomparsa */}
+      {!settings.zenMode && (
+        <TabBar
+          tabs={tabs}
+          activeTabId={activeChapterId}
+          isVisible={isTabBarVisible}
+          isGlossaryOpen={isGlossaryOpen}
+          allChapters={chapters}
+          onSelectTab={handleSelectTab}
+          onCloseTab={handleCloseTab}
+          onCloseOtherTabs={handleCloseOtherTabs}
+          onDeleteChapter={handleDeleteChapter}
+          onOpenPlotTab={handleOpenPlotTab}
+          onOpenNewChapter={handleCreateChapter}
+          onOpenChapter={handleOpenChapterInTab}
+          onToggleGlossary={() => setIsGlossaryOpen((prev) => !prev)}
+          onToggleVisibility={handleToggleTabBar}
+        />
+      )}
+
+      {/* Glossario a Scomparsa (Schede, Indice Capitoli, Bibbia Personaggi) */}
+      {!settings.zenMode && (
+        <GlossaryDrawer
+          isOpen={isGlossaryOpen}
+          activeProjectId={activeProjectId}
+          projectTitle={projectProfile.title}
+          tabs={tabs}
+          activeTabId={activeChapterId}
+          allChapters={chapters}
+          onClose={() => setIsGlossaryOpen(false)}
+          onSelectTab={handleSelectTab}
+          onCloseTab={handleCloseTab}
+          onDeleteChapter={handleDeleteChapter}
+          onOpenPlotTab={handleOpenPlotTab}
+          onOpenChapter={handleOpenChapterInTab}
+          onCreateChapter={handleCreateChapter}
+          onOpenWorldbuilding={() => {
+            setIsGlossaryOpen(false);
+            setIsWorldbuildingOpen(true);
+          }}
+          onInsertTextIntoEditor={handleInsertTextIntoEditor}
+        />
+      )}
 
       {/* Barra Laterale Capitoli & Progetto (SQLite Single Source of Truth) */}
       <ChapterSidebar

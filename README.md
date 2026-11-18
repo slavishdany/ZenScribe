@@ -1,104 +1,169 @@
 # 🪶 ZenScribe
 
-> **Un ambiente di videoscrittura minimale, privato e ibrido (Locale + Cloud) progettato per scrittori e narratori.**
+> **Un ambiente di videoscrittura minimale, privato e ibrido (Locale + Cloud) progettato per scrittori, romanzieri e narratori.**
 
-ZenScribe nasce per eliminare ogni distrazione visiva e restituire al pensiero lo spazio che merita. Combina un'esperienza di stesura immersiva con una doppia intelligenza artificiale: un **motore locale nativo integrato in Rust al 100% privato** per la correzione bozze e lo stile (con download dinamico dei modelli GGUF), e la potenza di **Google Gemini** per lo sviluppo creativo e la generazione di trame complesse basate sulle schede del tuo mondo narrativo.
+ZenScribe nasce per eliminare ogni distrazione visiva e restituire al pensiero lo spazio che merita. Combina un'esperienza di stesura immersiva e pulita con un'architettura a **schede di lavoro a scomparsa**, gestione **multi-romanzo** su SQLite locale, e una **doppia intelligenza artificiale**: un **motore locale nativo integrato in Rust al 100% privato** (con download dinamico dei modelli GGUF e interruzione istantanea senza freeze), e la flessibilità del **Cloud AI** (Gemini, Claude, GPT, OpenRouter, Groq) per lo sviluppo creativo della trama e la coerenza narrativa.
 
 ---
 
 ## ✨ Caratteristiche Principali
 
-### 🌿 1. Esperienza di Scrittura Zen & Tipografia Curata
-- **Modalità Zen (Focus Totale)**: nasconde l'intera interfaccia con un click (o tasto dedicato) lasciando sullo schermo solo le tue parole.
-- **Tipografia Personalizzabile**: scelta tra caratteri Serif (*Merriweather*), Sans-serif (*Inter*) e Monospazio (*JetBrains Mono*).
-- **Larghezza Foglio Regolabile**: da layout stretto per saggistica e ritmo (65ch) fino a standard (80ch), largo (100ch) o piena larghezza.
-- **Tema Chiaro / Scuro**: contrasti calibrati per non affaticare la vista durante lunghe sessioni notturne.
-- **Statistiche in Tempo Reale**: conteggio parole, caratteri e stima dei tempi di lettura costantemente aggiornati.
+### 🌿 1. Esperienza di Scrittura Zen & Distraction-Free
+- **Modalità Zen (Focus Totale)**: nasconde l'intera interfaccia con un click (o tasto dedicato nella barra inferiore) lasciando sullo schermo unicamente il foglio e le tue parole.
+- **Barra delle Schede a Scomparsa (`Ctrl+Alt+T`)**: tieni aperte contemporaneamente schede per i vari capitoli e per la **Trama & Struttura**. Puoi nascondere o mostrare la barra delle schede in qualsiasi momento per mantenere lo spazio di lavoro perfettamente pulito.
+- **Tipografia Curata**: scelta tra caratteri Serif (*Merriweather*), Sans-serif (*Inter*) e Monospazio (*JetBrains Mono*).
+- **Larghezza Foglio Regolabile**: layout Stretto per saggistica e ritmo (65ch), Standard (80ch), Largo (100ch) o Piena Larghezza.
+- **Tema Chiaro / Scuro Ottimizzato**: contrasti ad alta leggibilità calibrati per sessioni notturne prolungate, senza abbagliamenti né elementi a basso contrasto.
+- **Trova e Sostituisci Integrato (`Ctrl+F`)**: barra fluttuante con navigazione tra occorrenze e sostituzione singola o globale nel capitolo.
+- **Statistiche in Tempo Reale**: conteggio parole, caratteri e stima tempi di lettura costantemente sincronizzati con SQLite.
 
 ---
 
-### 🛡️ 2. Intelligenza Artificiale Ibrida: Privacy & Creatività
+### 📑 2. Gestione a Schede Multi-Documento & Glossario a Scomparsa
 
-#### 🔒 Fase 1: Motore Locale Nativo (.gguf) — Gratuito, Offline & Privato
-- **Download Dinamico & One-Click**: seleziona e scarica qualsiasi modello direttamente dall'interfaccia grafica con barra di avanzamento e velocità in tempo reale.
-- **Preset Ottimizzati Inclusi**:
-  - *Llama 3.2 3B (Consigliato - Veloce)*: ~2.0 GB, basso consumo di RAM.
-  - *Gemma 2 2B (Leggerissimo)*: ~1.6 GB, ideale per laptop e PC datati.
-  - *Mistral 7B v0.3 (Bilanciato - Alta qualità)*: ~4.4 GB, per configurazioni moderne (almeno 16GB RAM).
-  - *Phi-3 Medium (Avanzato - Logica)*: ~7.9 GB, per compiti complessi e GPU dedicate.
-- **Opzione Personalizzata**: puoi scaricare qualsiasi modello `.gguf` presente su Hugging Face inserendo semplicemente Repository ID e Nome File.
-- **Motore Nativo Rust (Zero Sidecar)**: i pesi quantizzati vengono eseguiti nativamente in memoria nel codice Rust tramite la libreria Candle di Hugging Face, eliminando del tutto file binari esterni separati (es. `llamafile-server`) e qualsiasi processo zombie in background.
-- **Smart Caching**: i modelli scaricati vengono archiviati nella cartella protetta locale (`AppData` su Windows). Se il modello è già presente, il download viene saltato e l'attivazione è istantanea.
-- **Zero fuga di dati**: i tuoi testi non lasciano mai il computer.
-
-#### ☁️ Fase 2: Barra Laterale AI & Co-Autore Creativo (Chat dell'Opera & Cloud)
-- **Barra Laterale Affiancata (Zero Popup Ostacolanti)**: l'assistente si apre come una elegante sidebar laterale a destra dell'editor. Puoi continuare a scrivere, consultare i capitoli e dialogare con l'editor AI contemporaneamente!
-- **Chat sul Libro con Contesto Globale**: parla della storia con un co-autore che ha accesso all'intero manoscritto, all'indice dei capitoli e alla Bibbia narrativa (personaggi, luoghi e relazioni).
-- **Contatore Token in Tempo Reale**: indicatore dinamico dei token attivi nel contesto per avere sempre sotto controllo la spesa delle API.
-- **Revisioni One-Click**: correggi refusi o riscrivi brani applicandoli istantaneamente all'intero capitolo o alla selezione.
-- **Gratuito con la tua chiave**: utilizza le API di *Google AI Studio* con i modelli Gemini 1.5 Flash e 2.0 Flash (o Claude, GPT-4o, DeepSeek). La tua chiave rimane memorizzata esclusivamente in locale.
+- **Schede di Lavoro Simultanee**: naviga tra capitoli multipli senza perdere il punto di stesura.
+- **Scheda Trama & Struttura Dedicata**: redigi la scaletta della storia, gli atti, i punti di svolta e le sottotrame in una scheda dedicata, memorizzata direttamente nel database SQLite del progetto.
+- **Creazione & Chiusura Rapida**:
+  - Un clic sul pulsante **`+`** crea e apre istantaneamente un nuovo capitolo.
+  - La freccina **`▼`** apre il menu fluttuante per passare subito alla *Trama* o aprire capitoli esistenti.
+  - Pulsante **`✕`** sempre attivo su ogni scheda per chiuderla in qualsiasi momento.
+  - Clic col **tasto destro** sulla scheda per: *Chiudi scheda*, *Chiudi le altre schede* o *Elimina capitolo dal romanzo*.
+- **Glossario a Scomparsa (`Ctrl+G`)**:
+  - Cassetto laterale istantaneo per consultare l'indice completo dell'opera.
+  - **Schede Attive**: panoramica rapida con indicatore della scheda in uso e pulsante di chiusura.
+  - **Trama & Canovaccio**: accesso con 1 clic alla struttura narrativa.
+  - **Capitoli del Manoscritto**: elenco con conteggio parole in tempo reale e opzioni per aggiungere o eliminare capitoli.
+  - **Glossario del Mondo**: lista ricercabile di personaggi, fazioni, luoghi e lore. Permette di:
+    - *Modificare al volo* qualsiasi scheda senza aprire modali ingombranti.
+    - *Copiare* la lore negli appunti.
+    - *Inserire* il nome dell'entità nell'editor con un solo clic nel punto del cursore.
 
 ---
 
-### 📖 3. Database SQLite Integrato & Worldbuilding
+### 📚 3. Gestione Multi-Progetto & Profilazione Narrativa
 
-Tutti i dati risiedono in un database SQLite locale integrato tramite `tauri-plugin-sql`:
+- **Libreria Multi-Romanzo**: crea, gestisci ed esporta più progetti letterari indipendenti all'interno dello stesso database SQLite locale.
+- **Profilo Narrativo Completo**: definisci per ciascun romanzo:
+  - Genere Letterario & Titolo Opera
+  - Premessa Narrativa / Logline
+  - Tono & Registro Stilistico (es. *Evocativo & Cupo*, *Leggero & Brillante*)
+  - Voce Narrante & Punto di Vista (es. *Terza persona limitata*, *Prima persona*)
+  - Atmosfera / Target Audience
+  - Note di Regia e Vincoli Stilistici
+- **Iniezione Contestuale Automatica**: il profilo narrativo viene fornito all'Assistente AI per garantire che riscritture, dialoghi e consigli mantengano sempre la voce e lo stile dell'autore.
+- **Backup & Auto-Esportazione con Indice (`Manifest`)**:
+  - Auto-salvataggio periodico programmabile (ogni 5, 10, 15, 30 min) su una cartella fisica a scelta su disco.
+  - Snapshot completo con indice `zenscribe.manifest.json`, manoscritto unificato (`.md` / `.txt`), capitoli singoli e bibbia del worldbuilding.
+  - Re-importazione sicura da disco per backup o cambio postazione.
 
-- **Gestione Multi-Capitolo**: sidebar laterale a scomparsa per creare, organizzare, sfogliare, rinominare ed eliminare capitoli del libro con salvataggio automatico debounced.
-- **Bibbia del Romanzo (Personaggi & Luoghi)**: archivio per schede di *Personaggi*, *Luoghi*, *Oggetti* e *Note di trama*. Puoi modificare ogni voce al volo, cambiarne la categoria e copiare i testi negli appunti.
-- **Generatore di Trama da Personaggi (Gemini)**: genera automaticamente una proposta di trama articolata (Premessa, Archi dei personaggi, Struttura in Tre Atti e Scene Madri) partendo direttamente dalle schede inserite nella Bibbia. Con un click puoi salvarla come nuovo capitolo della storia!
-- **Memoria Contestuale**: le schede dei personaggi e delle ambientazioni vengono passate automaticamente come contesto all'AI, evitando allucinazioni e garantendo coerenza narrativa.
+---
+
+### 🗺️ 4. Bibbia del Romanzo (Worldbuilding & Relazioni)
+
+- **Mappa Concettuale delle Entità**: gestisci schede dettagliate per *Personaggi*, *Fazioni / Clan*, *Luoghi*, *Oggetti / Artefatti* e *Note di trama*.
+- **Modifica Schede Dedicata**: apri la finestra di modifica con un clic sull'icona o con un semplice **doppio clic** sulla card.
+- **Grafico Relazionale**: collega entità tra loro tramite relazioni orientate ed etichettate (es. *Alleato di*, *Nemico giurato*, *Mentore di*, *Custode di*).
+- **Generatore di Trama AI da Bibbia**: genera una struttura in Tre Atti articolata partendo dall'intreccio dei personaggi e salvala direttamente come capitolo o canovaccio.
+
+---
+
+### 🛡️ 5. Intelligenza Artificiale Ibrida: Privacy & Potenza Creativa
+
+#### 🔒 Motore Locale Nativo (.gguf) — 100% Offline, Gratuito & Privato
+- **Motore Rust Diretto (Candle)**: i modelli quantizzati GGUF girano direttamente nel processo Rust di Tauri, eliminando runtime esterni (zero sidecar o processi zombie).
+- **Zero Freeze & Prestazioni Fluide**: architettura atomica lock-free per evitare deadlocks tra il backend Rust e la WebView.
+- **Chunked Prefill & Interruzione Istantanea Sub-100ms**: il prompt viene valutato in blocchi da 64 token con controllo costante del segnale di abort. Premendo **"Interrompi"**, la generazione si ferma all'istante senza bloccare l'interfaccia.
+- **Pulizia KV Cache Automatica**: azzeramento della cache memoria tra una generazione e l'altra per evitare accumuli di RAM e corruzione posizionale RoPE.
+- **Rilevamento Anti-Loop**: blocca tempestivamente generazioni ripetitive.
+- **Preset One-Click & Modelli Personalizzati**:
+  - *Llama 3.2 3B* (Consigliato - Veloce, basso consumo RAM)
+  - *Gemma 2 2B* (Leggerissimo, ideale per laptop)
+  - *Mistral 7B v0.3* (Bilanciato - Alta qualità letteraria)
+  - *Phi-3 Medium* (Avanzato - Logica e complessità)
+  - Download di qualsiasi GGUF da Hugging Face inserendo Repo ID e nome file.
+
+#### ☁️ Assistente AI Docked & Multi-Cloud (Gemini, Claude, GPT, OpenRouter, Groq)
+- **Barra Laterale Affiancata (Zero Popup)**: dialoga con l'assistente visualizzando contemporaneamente il testo.
+- **Chat dell'Opera con Contesto Globale**: l'assistente conosce il manoscritto, il capitolo attivo, la bibbia dei personaggi e il profilo narrativo.
+- **Contatore Token Dinamico**: monitoraggio in tempo reale dei token di contesto e stima dei costi.
+- **Pulsante Interrompi Cloud**: stop immediato anche per le chiamate API Cloud tramite `AbortController`.
+- **Revisioni Rapide**: correzione ortografica, riscrittura, espansione o sintesi applicabili con un clic alla selezione o all'intero capitolo.
+
+---
+
+## ⌨️ Scorciatoie da Tastiera Principali
+
+| Scorciatoia | Funzione |
+|---|---|
+| **`Ctrl + Alt + T`** | Mostra / Nascondi la barra delle schede di lavoro |
+| **`Ctrl + G`** | Apri / Chiudi il Glossario a scomparsa delle schede e del mondo |
+| **`Ctrl + F`** | Apri / Chiudi la barra Trova e Sostituisci |
+| **`Ctrl + Z` / `Ctrl + Y`** | Annulla / Ripristina modifiche nel testo |
+| **`Esc`** | Chiudi modali, popover o cassetto del Glossario |
+| **Doppio Clic su Card** | Modifica istantanea della scheda del Worldbuilding |
+| **Tasto Destro su Scheda** | Menu opzioni scheda (*Chiudi*, *Chiudi altre*, *Elimina capitolo*) |
 
 ---
 
 ## 🛠️ Stack Tecnologico
 
-- **Desktop Runtime**: [Tauri v2](https://tauri.app/) (Rust)
+- **Desktop Framework**: [Tauri v2](https://tauri.app/) (Rust)
 - **Frontend**: [React 18](https://react.dev/), [TypeScript](https://www.typescriptlang.org/)
+- **Bundler & Build Tool**: [Vite](https://vitejs.dev/)
 - **Editor Rich-Text**: [TipTap](https://tiptap.dev/) (ProseMirror engine)
 - **Stili & UI**: [Tailwind CSS](https://tailwindcss.com/), [Lucide React](https://lucide.dev/)
 - **Database Locale**: SQLite tramite `@tauri-apps/plugin-sql`
-- **Motore AI Locale**: [Candle](https://github.com/huggingface/candle) (Inference engine nativo in Rust per modelli quantizzati GGUF)
-- **Cloud AI SDK**: `@google/generative-ai`
+- **Motore AI Locale**: [Hugging Face Candle](https://github.com/huggingface/candle) (Inference engine nativo in Rust per quantizzazioni GGUF)
+- **Integrazioni Cloud**: Google Gemini API, OpenAI, Anthropic Claude, OpenRouter, Groq
 
 ---
 
-## 🚀 Prerequisiti e Avvio
+## 🚀 Installazione e Avvio
 
-### Prerequisiti di Sistema
-- **Node.js** (versione 18 o superiore)
-- **Rust & Cargo** (versione 1.75+): [rustup.rs](https://rustup.rs/)
+### Prerequisiti
+- **Node.js** (v18 o superiore)
+- **Rust & Cargo** (v1.75+): installabile da [rustup.rs](https://rustup.rs/)
 
-### 1. Clona il Repository e seleziona il branch
+### 1. Clonazione Repository
 ```bash
 git clone https://github.com/slavishdany/ZenScribe.git
 cd ZenScribe
-git checkout develop
 ```
 
-### 2. Installa le Dipendenze
+### 2. Installazione Dipendenze
 ```bash
 npm install
 ```
 
-### 3. Avvia in Modalità Sviluppo
+### 3. Avvio in Modalità Sviluppo
 ```bash
 npm run tauri dev
 ```
-All'avvio, apri il menu Impostazioni (icona in basso o in alto) per selezionare e scaricare in un click il modello AI locale desiderato tra i 4 preset suggeriti o inserire un modello personalizzato.
 
-### 4. Compila l'Eseguibile per la Produzione
+### 4. Compilazione Build Finale (Release Desktop)
 ```bash
 npm run tauri build
 ```
-L'eseguibile compilato e il programma di installazione si troveranno in `src-tauri/target/release/bundle/`.
+I binari eseguibili e gli installer autoinstallanti (`.msi` / `.exe` su Windows) verranno generati nella cartella `src-tauri/target/release/bundle/`.
 
 ---
 
-## 🔑 Configurazione Gemini API & Stima dei Costi
+## 🔑 Configurazione Cloud API & Stima dei Costi
 
-1. Ottieni gratuitamente una chiave API su [Google AI Studio](https://aistudio.google.com/app/apikey).
+1. Per utilizzare Google Gemini: ottieni gratuitamente una chiave su [Google AI Studio](https://aistudio.google.com/app/apikey).
 2. Apri le **Impostazioni** di ZenScribe (icona ingranaggio nella barra di stato in basso).
-3. Incolla la chiave nella sezione *Google Gemini (Cloud)* e salva.
+3. Seleziona il provider preferito (Gemini, Claude, OpenAI, OpenRouter o Groq), inserisci la tua API Key e seleziona il modello.
 
-> 💰 **Valutazione Economica & Token:** Consulta la guida dettagliata [COSTI_API.md](COSTI_API.md) per l'analisi completa dei costi per capitolo, stima token in lingua italiana, confronto tra provider (Gemini, Claude, GPT, DeepSeek, Locale) e trucchi per scrivere gratis.
+> 💰 **Valutazione Economica & Token:** Consulta la guida [COSTI_API.md](COSTI_API.md) per l'analisi dettagliata dei costi per capitolo, stima token in italiano e confronto tra provider.
+
+---
+
+## 📜 Cronologia Modifiche
+
+Consulta il file [CHANGELOG.md](CHANGELOG.md) per l'elenco dettagliato delle novità, miglioramenti e correzioni introdotte in ciascuna versione.
+
+---
+
+## 📄 Licenza
+
+Distribuito sotto licenza **MIT**. Consulta il file `LICENSE` per ulteriori dettagli.

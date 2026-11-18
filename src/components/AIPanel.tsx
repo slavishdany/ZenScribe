@@ -20,7 +20,7 @@ import {
   Coins,
   Info,
 } from 'lucide-react';
-import { correctSpellingLocal, rephraseTextLocal, chatWithLocalAI } from '../services/localAi';
+import { correctSpellingLocal, rephraseTextLocal, chatWithLocalAI, abortLocalAI } from '../services/localAi';
 import {
   continueWritingCreative,
   expandConceptCreative,
@@ -117,6 +117,11 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   const [chatError, setChatError] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [appliedToast, setAppliedToast] = useState<string | null>(null);
+
+  // Stato interruzione generazione
+  const [isAborting, setIsAborting] = useState(false);
+  const isAbortedRef = useRef(false);
+  const cloudAbortControllerRef = useRef<AbortController | null>(null);
 
   // Ambito di contesto per la chat: default sul capitolo attivo o sulla selezione se presente
   const [contextScope, setContextScope] = useState<ChatContextScope>(() => {
@@ -311,12 +316,45 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   }, [contextScope, selectedText, currentChapterContent, currentChapterTitle, chapters, projectTitle, isOpen]);
 
   // ============================================================================
+  // INTERRUZIONE GENERAZIONE IN CORSO
+  // ============================================================================
+  const handleAbortChat = async () => {
+    isAbortedRef.current = true;
+    setIsAborting(true);
+    try {
+      if (chatEngine === 'local') {
+        await abortLocalAI();
+      } else {
+        cloudAbortControllerRef.current?.abort();
+      }
+    } catch (err) {
+      console.warn('[AIPanel] Errore durante interruzione chat:', err);
+    } finally {
+      setChatLoading(false);
+      setIsAborting(false);
+    }
+  };
+
+  const handleAbortQuickAction = async () => {
+    try {
+      await abortLocalAI();
+    } catch (err) {
+      console.warn('[AIPanel] Errore abort quick action:', err);
+    } finally {
+      setIsQuickLoading(false);
+      setActiveQuickAction(null);
+    }
+  };
+
+  // ============================================================================
   // INVIO MESSAGGIO NELLA CHAT DEL LIBRO
   // ============================================================================
   const handleSendChatMessage = async (overridePrompt?: string) => {
     const textToSend = (overridePrompt || chatInput).trim();
     if (!textToSend || chatLoading) return;
 
+    isAbortedRef.current = false;
+    setIsAborting(false);
     setChatLoading(true);
     setChatError(null);
 
@@ -387,19 +425,46 @@ Trattale come il tuo tavolo di lavoro comune con l'autore. Non dire MAI "non pos
             'Nessun modello AI locale attivo in memoria. Apri le impostazioni e attiva un modello GGUF oppure passa alla modalità Cloud.'
           );
         }
-        assistantReply = await chatWithLocalAI(apiMessages, fullSystemPrompt, 0.4, 2048);
+        // Per il motore locale su CPU: usiamo un estratto compatto di contesto (max 1200 caratteri)
+        // e un prompt essenziale per garantire risposte veloci ed evitare saturazione di memoria
+        const compactContext = contextAttached ? contextAttached.slice(0, 1200) : '';
+        const localPrompt = `Sei l'Editor Letterario in ZenScribe per l'opera "${projectTitle || 'il romanzo'}". Assisti l'autore in italiano in modo chiaro, utile, conciso e diretto.${compactContext ? `\n\nESTRATTO CONTESTO:\n${compactContext}` : ''}`;
+        
+        // Passa solo gli ultimi scambi della chat per velocità
+        const recentHistory = apiMessages.slice(-3);
+        assistantReply = await chatWithLocalAI(recentHistory, localPrompt, 0.3, 384);
       } else {
         if (!hasCloudKey) {
           throw new Error(
             `Chiave API per ${activeCloudProvider.toUpperCase()} non configurata. Inseriscila nelle impostazioni o seleziona il modello Locale.`
           );
         }
+        const controller = new AbortController();
+        cloudAbortControllerRef.current = controller;
         assistantReply = await chatWithCloudProvider(
           resolvedSettings.cloud,
           apiMessages,
           fullSystemPrompt,
           { temperature: 0.7, maxTokens: 4096 }
         );
+      }
+
+      if (isAbortedRef.current) {
+        if (assistantReply && assistantReply.trim()) {
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: `msg-ai-${Date.now()}`,
+              role: 'assistant',
+              content: assistantReply.includes('[Risposta interrotta')
+                ? assistantReply
+                : `${assistantReply.trim()}\n\n*[Risposta interrotta dall'utente]*`,
+              timestamp: Date.now(),
+              providerUsed: chatEngine === 'local' ? modelBadge : cloudNameMap[activeCloudProvider] || 'Cloud',
+            },
+          ]);
+        }
+        return;
       }
 
       const assistantMessage: AIChatMessage = {
@@ -412,12 +477,17 @@ Trattale come il tuo tavolo di lavoro comune con l'autore. Non dire MAI "non pos
 
       setChatMessages((prev) => [...prev, assistantMessage]);
     } catch (err: any) {
+      if (isAbortedRef.current || err.message?.includes('interrotta') || err.name === 'AbortError') {
+        console.log('[AIPanel] Richiesta annullata correttamente.');
+        return;
+      }
       console.error('[AIPanel Chat Error]', err);
       setChatMessages((prev) => prev.filter((m) => m.id !== userMessageId));
       setChatInput(textToSend);
       setChatError(err.message || 'Si è verificato un errore durante la risposta.');
     } finally {
       setChatLoading(false);
+      setIsAborting(false);
     }
   };
 
@@ -871,13 +941,27 @@ Trattale come il tuo tavolo di lavoro comune con l'autore. Non dire MAI "non pos
               ))
             )}
 
-            {/* Spinner di caricamento */}
+            {/* Spinner di caricamento & tasto Interrompi */}
             {chatLoading && (
               <div className="flex flex-col items-start space-y-1">
                 <div className="text-[10px] text-stone-400 px-1">Editor AI in ascolto...</div>
-                <div className="bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700/80 rounded-2xl rounded-bl-xs p-2.5 text-xs flex items-center space-x-2 text-stone-500 shadow-2xs">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                  <span>Elaborazione risposta con {chatEngine === 'local' ? modelBadge : 'Cloud AI'}...</span>
+                <div className="bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700/80 rounded-2xl rounded-bl-xs p-2.5 text-xs flex items-center justify-between gap-3 text-stone-500 shadow-2xs w-full max-w-sm">
+                  <div className="flex items-center space-x-2 min-w-0">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    <span className="truncate">
+                      {isAborting ? 'Interruzione in corso...' : `Elaborazione (${chatEngine === 'local' ? modelBadge : 'Cloud AI'})...`}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isAborting}
+                    onClick={handleAbortChat}
+                    className="px-2.5 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:hover:bg-rose-900/80 dark:text-rose-300 font-semibold text-[11px] transition-all flex items-center space-x-1 shrink-0 shadow-2xs cursor-pointer active:scale-95 disabled:opacity-60"
+                    title="Interrompe immediatamente la risposta"
+                  >
+                    <X className="w-3 h-3" />
+                    <span>{isAborting ? 'Interruzione...' : 'Interrompi'}</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -1035,6 +1119,24 @@ Trattale come il tuo tavolo di lavoro comune con l'autore. Non dire MAI "non pos
                 </button>
               </div>
             </div>
+
+            {/* Banner Interrompi durante caricamento rapido */}
+            {isQuickLoading && (
+              <div className="flex items-center justify-between p-2.5 bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/50 rounded-xl text-rose-700 dark:text-rose-300 text-xs shadow-2xs">
+                <span className="flex items-center space-x-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Elaborazione in corso...</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleAbortQuickAction}
+                  className="px-2.5 py-1 rounded-md bg-rose-100 hover:bg-rose-200 text-rose-800 dark:bg-rose-900 dark:hover:bg-rose-800 dark:text-rose-200 font-semibold text-[11px] transition-all flex items-center space-x-1 shadow-2xs cursor-pointer active:scale-95"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Interrompi</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Errore Strumenti */}

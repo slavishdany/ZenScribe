@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use candle_core::quantized::gguf_file;
 use candle_core::{Device, Tensor};
@@ -23,6 +24,14 @@ impl QuantizedModel {
             Self::Qwen2(m) => m.forward(x, index_pos),
         }
     }
+
+    pub fn clear_kv_cache(&mut self) {
+        match self {
+            Self::Llama(m) => m.clear_kv_cache(),
+            Self::Qwen2(m) => m.clear_kv_cache(),
+            Self::Phi3(_) => {},
+        }
+    }
 }
 
 pub struct LoadedEngine {
@@ -37,6 +46,9 @@ pub struct NativeEngine {
     pub active_model_filename: Mutex<Option<String>>,
     pub active_model_path: Mutex<Option<PathBuf>>,
     pub loaded_engine: Mutex<Option<LoadedEngine>>,
+    pub is_loaded: AtomicBool,
+    pub is_generating: AtomicBool,
+    pub abort_signal: AtomicBool,
 }
 
 impl NativeEngine {
@@ -45,20 +57,18 @@ impl NativeEngine {
             active_model_filename: Mutex::new(None),
             active_model_path: Mutex::new(None),
             loaded_engine: Mutex::new(None),
+            is_loaded: AtomicBool::new(false),
+            is_generating: AtomicBool::new(false),
+            abort_signal: AtomicBool::new(false),
         }
     }
 
     pub fn is_ready(&self) -> bool {
-        self.loaded_engine
-            .lock()
-            .map(|guard| {
-                if let Some(ref e) = *guard {
-                    e.tokenizer.is_some()
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false)
+        self.is_loaded.load(Ordering::Relaxed)
+    }
+
+    pub fn abort(&self) {
+        self.abort_signal.store(true, Ordering::SeqCst);
     }
 
     pub fn get_active_model_name(&self) -> Option<String> {
@@ -169,6 +179,7 @@ impl NativeEngine {
         if let Ok(mut guard) = self.active_model_filename.lock() {
             *guard = Some(filename.to_string());
         }
+        self.is_loaded.store(true, Ordering::SeqCst);
 
         println!("[ZenScribe Native AI] Modello {} caricato nativamente con successo!", filename);
         Ok(())
@@ -176,6 +187,8 @@ impl NativeEngine {
 
     /// Scarica il modello dalla memoria
     pub fn unload_model(&self) {
+        self.is_loaded.store(false, Ordering::SeqCst);
+        self.abort();
         if let Ok(mut guard) = self.loaded_engine.lock() {
             *guard = None;
         }
@@ -195,6 +208,17 @@ impl NativeEngine {
         max_tokens: usize,
         temperature: f64,
     ) -> Result<String, String> {
+        self.abort_signal.store(false, Ordering::SeqCst);
+        self.is_generating.store(true, Ordering::SeqCst);
+
+        struct GenGuard<'a>(&'a AtomicBool);
+        impl<'a> Drop for GenGuard<'a> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = GenGuard(&self.is_generating);
+
         let mut engine_guard = self
             .loaded_engine
             .lock()
@@ -208,6 +232,10 @@ impl NativeEngine {
             .tokenizer
             .as_ref()
             .ok_or_else(|| "Tokenizer non disponibile per il modello selezionato.".to_string())?;
+
+        // CRUCIALE: Ripulisce la cache KV precedente per evitare accumulo esponenziale in memoria
+        // e calcoli quadratici corrotti sui vecchi token
+        engine.model.clear_kv_cache();
 
         // Formattazione prompt in base all'architettura specifica
         let formatted_prompt = if engine.arch_name.contains("qwen") {
@@ -266,40 +294,75 @@ impl NativeEngine {
         let device = &engine.device;
 
         let mut current_pos = 0;
+        let mut last_logit_opt = None;
+        let chunk_size = 64;
 
-        // Prompt feed-forward iniziale
-        let input_tensor = Tensor::new(tokens, device)
-            .and_then(|t| t.unsqueeze(0))
-            .map_err(|e| format!("Errore creazione tensore di input: {}", e))?;
+        // Prompt feed-forward a blocchi per consentire l'interruzione immediata anche durante il prefill
+        for chunk in tokens.chunks(chunk_size) {
+            if self.abort_signal.load(Ordering::SeqCst) {
+                println!("[ZenScribe Native AI] Inferenza interrotta durante il prefill del prompt.");
+                engine.model.clear_kv_cache();
+                return Err("Generazione interrotta dall'utente.".to_string());
+            }
 
-        let logits = engine
-            .model
-            .forward(&input_tensor, current_pos)
-            .map_err(|e| format!("Errore forward pass iniziale: {}", e))?;
+            let input_tensor = Tensor::new(chunk, device)
+                .and_then(|t| t.unsqueeze(0))
+                .map_err(|e| format!("Errore creazione tensore di input: {}", e))?;
 
-        let logits = logits
-            .squeeze(0)
-            .map_err(|e| format!("Errore squeeze logits: {}", e))?;
+            let logits = engine
+                .model
+                .forward(&input_tensor, current_pos)
+                .map_err(|e| format!("Errore forward pass: {}", e))?;
 
-        let last_logit = logits
-            .get(tokens.len() - 1)
-            .map_err(|e| format!("Errore recupero ultimo logit: {}", e))?;
+            current_pos += chunk.len();
+
+            let logits = logits
+                .squeeze(0)
+                .map_err(|e| format!("Errore squeeze logits: {}", e))?;
+
+            last_logit_opt = Some(
+                logits
+                    .get(chunk.len() - 1)
+                    .map_err(|e| format!("Errore recupero logit: {}", e))?,
+            );
+        }
+
+        let last_logit = last_logit_opt
+            .ok_or_else(|| "Nessun logit calcolato dal prompt.".to_string())?;
 
         let mut next_token = logits_processor
             .sample(&last_logit)
             .map_err(|e| format!("Errore campionamento token: {}", e))?;
 
-        current_pos += tokens.len();
+        let effective_max_tokens = max_tokens.clamp(16, 512);
+        let mut was_aborted = false;
 
-        for _ in 0..max_tokens {
+        for _ in 0..effective_max_tokens {
+            if self.abort_signal.load(Ordering::SeqCst) {
+                println!("[ZenScribe Native AI] Inferenza interrotta da segnale di abort.");
+                was_aborted = true;
+                break;
+            }
+
             if next_token == engine.eos_token_id
                 || next_token == 128009 // Llama 3 <|eot_id|>
                 || next_token == 128001 // Llama 3 <|end_of_text|>
+                || next_token == 128008 // Llama 3 <|header_id|>
                 || next_token == 151645 // Qwen 2 <|im_end|>
                 || next_token == 32000  // Phi-3 <|end|>
                 || next_token == 32007  // Phi-3 <|endoftext|>
                 || next_token == 2      // Generic EOS
             {
+                break;
+            }
+
+            // Rilevamento loop di ripetizione infinita (3 token consecutivi identici)
+            let gen_len = generated_tokens.len();
+            if gen_len >= 3
+                && generated_tokens[gen_len - 1] == next_token
+                && generated_tokens[gen_len - 2] == next_token
+            {
+                println!("[ZenScribe Native AI] Loop di ripetizione rilevato, arresto generazione.");
                 break;
             }
 
@@ -329,11 +392,21 @@ impl NativeEngine {
             current_pos += 1;
         }
 
+        // Ripulisce la cache KV al termine della generazione per liberare memoria
+        engine.model.clear_kv_cache();
+
         let generated_text = tokenizer
             .decode(&generated_tokens, true)
             .map_err(|e| format!("Errore decodifica testo: {}", e))?;
 
-        let clean_text = clean_output(&generated_text);
+        let mut clean_text = clean_output(&generated_text);
+        if was_aborted {
+            if clean_text.is_empty() {
+                return Err("Generazione interrotta dall'utente.".to_string());
+            } else {
+                clean_text.push_str("\n\n*[Risposta interrotta dall'utente]*");
+            }
+        }
         Ok(clean_text)
     }
 }

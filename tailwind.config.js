@@ -13,6 +13,10 @@ export default {
         mono: ['"JetBrains Mono"', '"Fira Code"', 'Consolas', 'monospace'],
       },
       colors: {
+        stone: {
+          750: '#211e1c',
+          850: '#181614',
+        },
         zen: {
           bg: '#FBFBFA',
           darkBg: '#121214',

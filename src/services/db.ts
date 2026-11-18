@@ -550,7 +550,7 @@ export async function elencaCapitoli(
   const db = await inizializzaDatabase();
   const projId = projectId || getActiveProjectId();
   const rows = await db.select<Array<{ id: string; title: string; content: string }>>(
-    `SELECT id, title, content FROM documents WHERE project_id = $1 ORDER BY rowid ASC`,
+    `SELECT id, title, content FROM documents WHERE project_id = $1 AND id NOT LIKE 'plot-%' ORDER BY rowid ASC`,
     [projId]
   );
   return rows;
@@ -629,6 +629,50 @@ export async function eliminaCapitolo(id: string): Promise<void> {
 export async function rinominaCapitolo(id: string, newTitle: string): Promise<void> {
   const db = await inizializzaDatabase();
   await db.execute(`UPDATE documents SET title = $1 WHERE id = $2`, [newTitle, id]);
+}
+
+/**
+ * Ottiene o inizializza la scheda Trama & Struttura del progetto
+ */
+export async function ottieniTramaProgetto(
+  projectId?: string
+): Promise<{ id: string; title: string; content: string }> {
+  const db = await inizializzaDatabase();
+  const projId = projectId || getActiveProjectId();
+  const plotId = `plot-${projId}`;
+  const rows = await db.select<Array<{ id: string; title: string; content: string }>>(
+    `SELECT id, title, content FROM documents WHERE id = $1`,
+    [plotId]
+  );
+  if (rows.length > 0) {
+    return rows[0];
+  }
+  const defaultPlot = `<h1>Trama &amp; Struttura Narrativa</h1>
+<p>Questo spazio dedicato ti permette di pianificare la scaletta della storia, gli snodi narrativi, i punti di svolta e le sottotrame senza distrazioni.</p>
+<h2>Atto I: L'Inizio &amp; Incidente Scatenante</h2>
+<p>Presentazione del protagonista, status quo, l'evento che mette in moto la narrazione...</p>
+<h2>Atto II: Lo Sviluppo &amp; Punto di Non Ritorno</h2>
+<p>Prove, conflitti, alleanze, colpi di scena e la crisi centrale...</p>
+<h2>Atto III: Il Climax &amp; La Risoluzione</h2>
+<p>La resa dei conti, la trasformazione del protagonista e l'epilogo...</p>`;
+  await db.execute(
+    `INSERT INTO documents (id, title, content, project_id) VALUES ($1, $2, $3, $4)
+     ON CONFLICT(id) DO NOTHING`,
+    [plotId, 'Trama & Struttura', defaultPlot, projId]
+  );
+  return { id: plotId, title: 'Trama & Struttura', content: defaultPlot };
+}
+
+/**
+ * Salva il contenuto della trama del progetto
+ */
+export async function salvaTramaProgetto(
+  content: string,
+  projectId?: string
+): Promise<void> {
+  const projId = projectId || getActiveProjectId();
+  const plotId = `plot-${projId}`;
+  await salvaCapitolo(plotId, 'Trama & Struttura', content, projId);
 }
 
 // ============================================================================

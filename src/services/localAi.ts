@@ -175,13 +175,24 @@ export async function rephraseTextLocal(text: string, context?: string): Promise
 }
 
 /**
+ * Interrompe l'inferenza AI locale in corso (annullamento istantaneo)
+ */
+export async function abortLocalAI(): Promise<void> {
+  try {
+    await invoke("abort_local_ai");
+  } catch (err) {
+    console.warn("[LocalAI] Errore invio segnale di interruzione:", err);
+  }
+}
+
+/**
  * Invia una richiesta generica di generazione o analisi testuale al motore AI nativo locale (Candle GGUF)
  */
 export async function generateLocalAI(
   prompt: string,
   systemPrompt?: string,
   temperature = 0.3,
-  maxTokens = 2048
+  maxTokens = 384
 ): Promise<string> {
   if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
     return await invoke<string>("generate_local_ai", {
@@ -200,8 +211,8 @@ export async function generateLocalAI(
 export async function chatWithLocalAI(
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
   systemPrompt?: string,
-  temperature = 0.4,
-  maxTokens = 2048
+  temperature = 0.3,
+  maxTokens = 384
 ): Promise<string> {
   const systemMessages = messages
     .filter((m) => m.role === 'system' && m.content && m.content.trim())
@@ -214,9 +225,9 @@ export async function chatWithLocalAI(
     .filter(Boolean)
     .join('\n\n');
 
-  // Protezione da superamento limite di contesto per CPU locale (max ~10.000 caratteri di contesto)
-  if (combinedSystemPrompt.length > 12000) {
-    combinedSystemPrompt = combinedSystemPrompt.slice(0, 12000) + '\n\n[...Contesto sintetizzato per limiti di memoria locale...]';
+  // Protezione da superamento limite di contesto per CPU locale (max ~2.500 caratteri per risposta ultra-rapida)
+  if (combinedSystemPrompt.length > 2500) {
+    combinedSystemPrompt = combinedSystemPrompt.slice(0, 2500) + '...';
   }
 
   const validDialogue = messages.filter(

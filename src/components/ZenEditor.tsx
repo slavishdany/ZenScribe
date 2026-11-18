@@ -6,7 +6,7 @@ import CharacterCount from '@tiptap/extension-character-count';
 import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
-import { Search, Replace, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { Search, Replace, ChevronUp, ChevronDown, X, Layers } from 'lucide-react';
 import { EditorFont, EditorWidth } from '../types';
 import { salvaCapitolo, caricaCapitolo } from '../services/db';
 
@@ -416,7 +416,21 @@ export const ZenEditor: React.FC<ZenEditorProps> = ({
           lineHeight: lineHeight,
         }}
       >
-        <EditorContent editor={editor} />
+        {!activeChapterId ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none space-y-3 max-w-sm mx-auto my-auto animate-in fade-in duration-200">
+            <div className="w-12 h-12 rounded-2xl bg-stone-100 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shadow-sm">
+              <Layers className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-200">Nessuna scheda aperta</h3>
+              <p className="text-xs text-stone-500 dark:text-stone-400">
+                Tutte le schede sono state chiuse. Usa il pulsante <strong>+</strong> in alto per aprire un capitolo oppure consulta il <strong>Glossario</strong> (Ctrl+G).
+              </p>
+            </div>
+          </div>
+        ) : (
+          <EditorContent editor={editor} />
+        )}
       </div>
     </main>
   );
