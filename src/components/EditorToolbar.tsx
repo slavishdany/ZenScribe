@@ -3,10 +3,21 @@ import { Editor } from '@tiptap/react';
 import {
   Bold,
   Italic,
+  Underline as UnderlineIcon,
+  Strikethrough,
+  Highlighter,
   Heading1,
   Heading2,
+  Heading3,
   Quote,
   List,
+  ListOrdered,
+  Minus,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  Search,
   Undo,
   Redo,
   Sparkles,
@@ -31,6 +42,8 @@ interface EditorToolbarProps {
   onThemeToggle: () => void;
   onOpenAIPanel: () => void;
   isAIPanelOpen?: boolean;
+  onToggleSearch?: () => void;
+  isSearchOpen?: boolean;
   onToggleChapters?: () => void;
   onOpenWorldbuilding?: () => void;
   onOpenProjectProfile?: () => void;
@@ -52,6 +65,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   onThemeToggle,
   onOpenAIPanel,
   isAIPanelOpen = false,
+  onToggleSearch,
+  isSearchOpen = false,
   onToggleChapters,
   onOpenWorldbuilding,
   onOpenProjectProfile,
@@ -87,10 +102,10 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           <button
             onClick={onOpenWorldbuilding}
             className="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-700 dark:text-stone-300 flex items-center space-x-1 text-xs font-medium"
-            title="Bibbia del Romanzo: Personaggi e Luoghi"
+            title="Bibbia del Romanzo: Personaggi, Luoghi & Mappa Concettuale"
           >
             <Compass className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <span className="hidden md:inline">Personaggi</span>
+            <span className="hidden md:inline">Worldbuilding</span>
           </button>
         )}
 
@@ -140,7 +155,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           onClick={() => editor.chain().focus().toggleBold().run()}
           className={`p-1.5 rounded transition-colors ${
             editor.isActive('bold')
-              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 font-bold'
               : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
           }`}
           title="Grassetto (Ctrl+B)"
@@ -151,13 +166,48 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           onClick={() => editor.chain().focus().toggleItalic().run()}
           className={`p-1.5 rounded transition-colors ${
             editor.isActive('italic')
-              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 italic'
               : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
           }`}
           title="Corsivo (Ctrl+I)"
         >
           <Italic className="w-4 h-4" />
         </button>
+        <button
+          onClick={() => editor.chain().focus().toggleUnderline().run()}
+          className={`p-1.5 rounded transition-colors ${
+            editor.isActive('underline')
+              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 underline'
+              : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+          }`}
+          title="Sottolineato (Ctrl+U)"
+        >
+          <UnderlineIcon className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+          className={`p-1.5 rounded transition-colors ${
+            editor.isActive('strike')
+              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 line-through'
+              : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+          }`}
+          title="Barrato"
+        >
+          <Strikethrough className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => editor.chain().focus().toggleHighlight().run()}
+          className={`p-1.5 rounded transition-colors ${
+            editor.isActive('highlight')
+              ? 'bg-amber-200 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200'
+              : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+          }`}
+          title="Evidenziatore passaggi chiave"
+        >
+          <Highlighter className="w-4 h-4" />
+        </button>
+
+        <div className="h-4 w-px bg-stone-300 dark:bg-stone-700 mx-1 hidden sm:block"></div>
 
         {/* Titoli e Stili */}
         <button
@@ -178,9 +228,20 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
               ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
               : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
           }`}
-          title="Sezione (H2)"
+          title="Capitolo / Sezione (H2)"
         >
           <Heading2 className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+          className={`p-1.5 rounded transition-colors ${
+            editor.isActive('heading', { level: 3 })
+              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+              : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+          }`}
+          title="Sottosezione / Scena (H3)"
+        >
+          <Heading3 className="w-4 h-4" />
         </button>
 
         <button
@@ -194,6 +255,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         >
           <Quote className="w-4 h-4" />
         </button>
+
+        {/* Elenchi */}
         <button
           onClick={() => editor.chain().focus().toggleBulletList().run()}
           className={`p-1.5 rounded transition-colors ${
@@ -205,6 +268,91 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         >
           <List className="w-4 h-4" />
         </button>
+        <button
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          className={`p-1.5 rounded transition-colors ${
+            editor.isActive('orderedList')
+              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+              : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+          }`}
+          title="Elenco Numerato"
+        >
+          <ListOrdered className="w-4 h-4" />
+        </button>
+
+        {/* Stacco di Scena Narrativo */}
+        <button
+          onClick={() => editor.chain().focus().setHorizontalRule().run()}
+          className="p-1.5 rounded hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400 transition-colors"
+          title="Stacco di Scena narrativo (♦ ♦ ♦)"
+        >
+          <Minus className="w-4 h-4" />
+        </button>
+
+        <div className="h-4 w-px bg-stone-300 dark:bg-stone-700 mx-1 hidden sm:block"></div>
+
+        {/* Allineamenti Testo */}
+        <div className="hidden lg:flex items-center space-x-0.5">
+          <button
+            onClick={() => editor.chain().focus().setTextAlign('left').run()}
+            className={`p-1.5 rounded transition-colors ${
+              editor.isActive({ textAlign: 'left' })
+                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+            }`}
+            title="Allinea a Sinistra"
+          >
+            <AlignLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => editor.chain().focus().setTextAlign('center').run()}
+            className={`p-1.5 rounded transition-colors ${
+              editor.isActive({ textAlign: 'center' })
+                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+            }`}
+            title="Centra"
+          >
+            <AlignCenter className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => editor.chain().focus().setTextAlign('right').run()}
+            className={`p-1.5 rounded transition-colors ${
+              editor.isActive({ textAlign: 'right' })
+                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+            }`}
+            title="Allinea a Destra"
+          >
+            <AlignRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => editor.chain().focus().setTextAlign('justify').run()}
+            className={`p-1.5 rounded transition-colors ${
+              editor.isActive({ textAlign: 'justify' })
+                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+            }`}
+            title="Giustifica"
+          >
+            <AlignJustify className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Trova e Sostituisci */}
+        {onToggleSearch && (
+          <button
+            onClick={onToggleSearch}
+            className={`p-1.5 rounded-lg transition-colors ${
+              isSearchOpen
+                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 ring-1 ring-indigo-400'
+                : 'hover:bg-stone-200/60 dark:hover:bg-stone-800/60 text-stone-600 dark:text-stone-400'
+            }`}
+            title="Trova e Sostituisci (Ctrl+F)"
+          >
+            <Search className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Preferenze Tipografia, Layout & Assistente AI */}

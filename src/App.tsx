@@ -66,6 +66,12 @@ export const App: React.FC = () => {
         if (parsed.geminiApiKey && !cloud.providers.gemini.apiKey) {
           cloud.providers.gemini.apiKey = parsed.geminiApiKey;
         }
+        if (cloud.providers?.gemini) {
+          const m = cloud.providers.gemini.model;
+          if (!m || m === 'gemini-1.5-flash' || m === 'gemini-2.0-flash' || m === 'gemini-1.5-pro') {
+            cloud.providers.gemini.model = 'gemini-2.5-flash';
+          }
+        }
         return { ...DEFAULT_SETTINGS, ...parsed, cloud };
       } catch (e) {
         return DEFAULT_SETTINGS;
@@ -121,6 +127,7 @@ export const App: React.FC = () => {
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Sincronizza tema HTML (dark class)
   useEffect(() => {
@@ -454,6 +461,8 @@ export const App: React.FC = () => {
         onExportSnapshot={handleExportSnapshot}
         onExportChapter={handleExportChapter}
         onExportManuscript={handleExportManuscript}
+        isSearchOpen={isSearchOpen}
+        onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
         isAIPanelOpen={isAIPanelOpen}
         onOpenAIPanel={() => {
           if (isAIPanelOpen) {
@@ -509,6 +518,9 @@ export const App: React.FC = () => {
           lineHeight={settings.lineHeight}
           width={settings.width}
           zenMode={settings.zenMode}
+          isSearchOpen={isSearchOpen}
+          onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
+          onCloseSearch={() => setIsSearchOpen(false)}
           onUpdateCounts={(words, characters) => {
             setWordCount(words);
             setCharacterCount(characters);
@@ -534,6 +546,7 @@ export const App: React.FC = () => {
             currentChapterTitle={chapters.find((c) => c.id === activeChapterId)?.title}
             currentChapterContent={editorInstance ? editorInstance.getHTML() : chapters.find((c) => c.id === activeChapterId)?.content}
             chapters={chapters}
+            activeProjectId={activeProjectId}
             projectTitle={projectProfile.title}
             projectProfile={projectProfile}
             settings={settings}
@@ -572,6 +585,7 @@ export const App: React.FC = () => {
         isOpen={isWorldbuildingOpen}
         geminiApiKey={settings.geminiApiKey}
         settings={settings}
+        activeProjectId={activeProjectId}
         onClose={() => setIsWorldbuildingOpen(false)}
         onCreateChapterFromPlot={handleCreateChapterFromPlot}
         onOpenSettings={() => {
@@ -584,10 +598,14 @@ export const App: React.FC = () => {
       <ProjectsManagerModal
         isOpen={isProjectsManagerOpen}
         initialTab={projectsManagerTab}
-        onClose={() => setIsProjectsManagerOpen(false)}
+        onClose={() => {
+          setIsProjectsManagerOpen(false);
+          refreshProjectData();
+        }}
         onProjectChanged={handleSwitchProject}
         onProjectUpdated={(newProfile) => {
           setProjectProfile(newProfile);
+          refreshProjectData();
         }}
       />
 
